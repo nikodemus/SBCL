@@ -323,60 +323,179 @@ created and old ones may exit at any time."
               ,@forms)
          (setf (thread-waiting-for ,n-thread) ,prev)))))
 
-(declaim (inline get-spinlock release-spinlock))
+;;;; SPINLOCKS
+;;;;
+;;;; Spinlocks are implemented entirely in the user space. Our implementation
+;;;; is mostly fair: threads get the spinlock in the order they queue
+;;;; themselves on it; the only exception is when a thread that was waiting
+;;;; for a spinlock is interrupted, which requires all threads that have
+;;;; arrived in the queue after it to requeue themselves (which essentially
+;;;; randomizes the order of those threads in the queue).
+;;;;
+;;;; Fairness is implemented with two half-word counters stored in a single
+;;;; word. The *high* half is the free-ticket-counter, and the *low* half is
+;;;; is the owner-ticket-counter.
+;;;;
+;;;; This imposes the restriction on the system that there may never be more
+;;;; then (- (expt 2 (/ n-word-bits 2)) 1) threads alive at the same time:
+;;;; there must be a unique ticket number for each live thread in a halfword.
+;;;;
+;;;; TO GRAB A LOCK:
+;;;;
+;;;; 1. Atomically increment the free-ticket-counter: the old value becomes
+;;;; our-ticket, and the incremented value becomes the next free ticket.
+;;;; (While doing this we also read the
+;;;;
+;;;; 2. If the owner-ticket-counter = our-ticket, the lock was free and we
+;;;; are done. Otherwise we spin to wait.
+;;;;
+;;;; 3. Reread the spinlock word, and check if owner-ticket-counter = our-ticket.
+;;;; If so, the lock has been released and we are done.
+;;;;
+;;;; 4. Check if the free-ticket-counter has been set back. Normally it is
+;;;; always "to the left" from us (greater in the modular cycle). If a thread
+;;;; that was in the queue gives up on the wait for whatever reason, it writes
+;;;; its ticket number back to the free-ticket-counter. If such a thread was
+;;;; before us in the queue, we can tell this because the free-ticket-counter
+;;;; jumps "to the right" us (lesser then us in the modular cycle). When this
+;;;; happens, our ticket is invalidated, and we need to get a new one: otherwise
+;;;; the owner-ticket-counter = ticket of the thread that gave up, and all other
+;;;; threads would wait forever.
+;;;;
+;;;; 5. Return to step 2.
+;;;;
+;;;; ...checking for interrupts, yielding, and backoff elided. See also:
+;;;;
+;;;;   http://lwn.net/Articles/267968/
+;;;;
+;;;; for an alternative description of the algorith (sans interrupt handling, which
+;;;; is an SBCL original.)
+;;;;
+;;;; TO RELEASE A LOCK:
+;;;;
+;;;; Increment the owner-ticket-counter. This doesn't have to be atomic: if only the
+;;;; lock owner is allowed to write here, and others spin till they see the new value.
+;;;;
+;;;; TO STOP WAITING FOR A LOCK:
+;;;;
+;;;; Write your ticket number to free-ticket-counter unless a thread with a
+;;;; higher priority has already done that. This needs to be done using CAS to
+;;;; make sure we don't stomp on higher-priority threads. (See comments in
+;;;; %SPINLOCK-INTERRUPT.)
+
+(defconstant +n-spinlock-ticket-bits+ (/ sb!vm:n-word-bits 2))
+(defconstant +spinlock-ticket-incf+ (ash 1 +n-spinlock-ticket-bits+))
+(defconstant +spinlock-ticket-limit+ (ash 1 +n-spinlock-ticket-bits+))
+(defconstant +spinlock-owner-ticket-mask+ (1- (ash 1 +n-spinlock-ticket-bits+)))
+(defconstant +spinlock-free-ticket-mask+ (ash +spinlock-owner-ticket-mask+ +n-spinlock-ticket-bits+))
+
+(declaim (inline word-owner-ticket word-free-ticket))
+(defun word-owner-ticket (word)
+  (logand +spinlock-owner-ticket-mask+ word))
+(defun word-free-ticket (word)
+  (ash (logand +spinlock-free-ticket-mask+ word) (- +n-spinlock-ticket-bits+)))
 
 ;;; Should always be called with interrupts disabled.
 (defun get-spinlock (spinlock)
-  (declare (optimize (speed 3) (safety 0)))
-  (let* ((new *current-thread*)
-         (old (sb!ext:compare-and-swap (spinlock-value spinlock) nil new)))
-    (when old
-      (when (eq old new)
-        (error "Recursive lock attempt on ~S." spinlock))
-      #!+sb-thread
-      (with-deadlocks (new spinlock)
-        (flet ((cas ()
-                 (if (sb!ext:compare-and-swap (spinlock-value spinlock) nil new)
-                     (thread-yield)
-                     (return-from get-spinlock t))))
-          ;; Try once.
-          (cas)
-          ;; Check deadlocks
-          (with-interrupts (check-deadlock))
-          (if (and (not *interrupts-enabled*) *allow-with-interrupts*)
-              ;; If interrupts are disabled, but we are allowed to
-              ;; enabled them, check for pending interrupts every once
-              ;; in a while. %CHECK-INTERRUPTS is taking shortcuts, make
-              ;; sure that deferrables are unblocked by doing an empty
-              ;; WITH-INTERRUPTS once.
-              (progn
-                (with-interrupts)
-                (loop
-                  (loop repeat 128 do (cas)) ; 128 is arbitrary here
-                  (sb!unix::%check-interrupts)))
-              (loop (cas)))))))
-    t)
+  (let ((self *current-thread*)
+        (owner (spinlock-value spinlock)))
+    (when (eq self owner)
+      (error "Recursive lock attempt on ~S." spinlock))
+    #!-sb-thread
+    (if owner
+        ;; Has owner, but that isn't us!
+        (bug "Corrupted spinlock: ~S" spinlock)
+        (setf (spinlock-value spinlock) self))
+    #!+sb-thread
+    (let ((check-interrupts (and (not *interrupts-enabled*) *allow-with-interrupts*))
+          (no-deadlock nil))
+      (with-deadlocks (self spinlock)
+        (tagbody
+         :new-ticket
+           (let* ((word (sb!ext:atomic-incf (spinlock-word spinlock) +spinlock-ticket-incf+))
+                  (owner-ticket (word-owner-ticket word))
+                  (my-ticket (word-free-ticket word)))
+             (if (= owner-ticket my-ticket)
+                 (go :got-it)
+                 (labels
+                     ((try ()
+                        (let* ((word (spinlock-word spinlock))
+                               (owner-ticket (word-owner-ticket word))
+                               (next-ticket (word-free-ticket word)))
+                          (cond ((= owner-ticket my-ticket)
+                                 (go :got-it))
+                                ((> owner-ticket my-ticket)
+                                 (unless (< my-ticket next-ticket owner-ticket)
+                                   (go :new-ticket)))
+                                (t
+                                 (unless (or (< my-ticket next-ticket +spinlock-ticket-limit+)
+                                             (< -1 next-ticket owner-ticket))
+                                   (go :new-ticket)))))))
+                   (unless no-deadlocks
+                     (check-deadlock)
+                     (setf no-deadlocks t))
+                   (loop for sleep = 10000 then (if (< sleep 10000000)
+                                                    (* sleep 10)
+                                                    10000)
+                         do (loop repeat 4
+                                  do (loop repeat 10 do (try))
+                                     (thread-yield))
+                            (when check-interrupts
+                              (when *interrupt-pending*
+                                (%spinlock-interrupt spinlock my-ticket)
+                                (go :new-ticket)))
+                            (thread-yield)
+                            (try)
+                            (sb!unix:nanosleep 0 sleep)))))
+         :got-it
+           (setf (spinlock-value spinlock) self)))))
+  t)
 
 (defun release-spinlock (spinlock)
-  (declare (optimize (speed 3) (safety 0)))
-  ;; On x86 and x86-64 we can get away with no memory barriers, (see
-  ;; Linux kernel mailing list "spin_unlock optimization(i386)"
-  ;; thread, summary at
-  ;; http://kt.iserv.nl/kernel-traffic/kt19991220_47.html#1.
-  ;;
-  ;; If the compiler may reorder this with other instructions, insert
-  ;; compiler barrier here.
-  ;;
-  ;; FIXME: this does not work on SMP Pentium Pro and OOSTORE systems,
-  ;; neither on most non-x86 architectures (but we don't have threads
-  ;; on those).
   (setf (spinlock-value spinlock) nil)
+  (incf-low-word (spinlock-word spinlock))
+  nil)
 
-  ;; FIXME: Is a :memory barrier too strong here?  Can we use a :write
-  ;; barrier instead?
-  #!+(not (or x86 x86-64))
-  (barrier (:memory)))
-
+(defun %spinlock-interrupt (spinlock my-ticket)
+  ;; First we need to give up our ticket: otherwise we block the
+  ;; queue while we handle the interrupt.
+  (tagbody
+   :retry
+     (flet ((try-cas (free-ticket)
+              (unless (= free-ticket (compare-and-swap-high-word (spinlock-word spinlock)
+                                                                 free-ticket
+                                                                 my-ticket))
+                (go :retry))))
+       (let* ((word (spinlock-word spinlock))
+              (owner-ticket (word-owner-ticket word))
+              (free-ticket (word-free-ticket word)))
+         ;; Three cases to consider:
+         ;;
+         ;; 1. We have become owners of the lock just now: give it to the next
+         ;; one in queue.
+         ;;
+         ;; 2. Another thread which was in queue *before* us has returned the
+         ;; ticket to the queue, invalidating ours. Do nothing.
+         ;;
+         ;; 3. No other interrupts, or only interrupts to threads after
+         ;; us in the queue: write our ticket to the free-ticket-counter
+         ;; using CAS to ensure atomicity. If the CAS fails, check again.
+         (cond ((= owner-ticket my-ticket)
+                (incf-low-word (spinlock-word spinlock)))
+               ((> owner-ticket my-ticket)
+                ;; Case 3 is true if the free ticket is between
+                ;; us and the owner.
+                (when (< my-ticket free-ticket owner-ticket)
+                  (try-cas free-ticket)))
+               (t
+                ;; (< owner-ticket my-ticket) is implied
+                ;; Case 3 is true if the free ticket is NOT between us
+                ;; and the owner.
+                (when (not (< owner-ticket free-ticket my-ticket))
+                  (try-cas free-ticket)))))))
+  ;; Now handle the interrupt.
+  (let ((*interrupts-enabled* t))
+    (sb!unix::receive-pending-interrupt)))
 
 ;;;; Mutexes
 

@@ -297,6 +297,56 @@ EXPERIMENTAL: Interface subject to change."
            (type sb!vm:signed-word diff))
   (%array-atomic-incf/word array index diff))
 
+;;;; Atomic frobs for low and high words -- used by fair spinlocks
+;;;; where available. Only for structure slots.
+#!+(or x86 x86-64)
+(progn
+  (defmacro incf-low-word (place)
+    (flet ((invalid-place ()
+             (error "Invalid argument to INCF-LOW-WORD: ~S" place)))
+      (unless (consp place)
+        (invalid-place))
+      (destructuring-bind (op &rest args) place
+        (let ((dd (info :function :structure-accessor op)))
+          (if dd
+            (let* ((structure (dd-name dd))
+                   (slotd (find op (dd-slots dd) :key #'dsd-accessor-name))
+                   (index (dsd-index slotd))
+                   (type (dsd-type slotd)))
+              (unless (and (eq 'sb!vm:word (dsd-raw-type slotd))
+                           (type= (specifier-type type) (specifier-type 'sb!vm:word)))
+                (error "INCF-LOW-WORD requires a slot of type (UNSIGNED-BYTE ~S), not ~S: ~S"
+                       sb!vm:n-word-bits type place))
+              (when (dsd-read-only slotd)
+                (error "Cannot use INCF-LOW-WORD with structure accessor for a read-only slot: ~S"
+                       place))
+              `(%raw-instance-incf-low/word (the ,structure ,@args) ,index))
+            (error "Invalid first argument to INCF-LOW-WORD: ~S" place))))))
+
+  (defmacro compare-and-swap-high-word (place old new)
+    (flet ((invalid-place ()
+             (error "Invalid argument to COMPARE-AND-SWAP-HIGH-WORD: ~S" place)))
+      (unless (consp place)
+        (invalid-place))
+      (destructuring-bind (op &rest args) place
+        (let ((dd (info :function :structure-accessor op)))
+          (if dd
+            (let* ((structure (dd-name dd))
+                   (slotd (find op (dd-slots dd) :key #'dsd-accessor-name))
+                   (index (dsd-index slotd))
+                   (type (dsd-type slotd)))
+              (unless (and (eq 'sb!vm:word (dsd-raw-type slotd))
+                           (type= (specifier-type type) (specifier-type 'sb!vm:word)))
+                (error "COMPARE-AND-SWAP-HIGH-WORD requires a slot of type (UNSIGNED-BYTE ~S), not ~S: ~S"
+                       sb!vm:n-word-bits type place))
+              (when (dsd-read-only slotd)
+                (error "Cannot use COMPARE-AND-SWAP-HIGH-WORD with structure accessor for a read-only slot: ~S"
+                       place))
+              `(%raw-instance-compare-and-swap-high/word (the ,structure ,@args) ,index
+                                                         (the sb!vm:half-word ,old)
+                                                         (the sb!vm:half-word ,new)))
+            (error "Invalid first argument to COMPARE-AND-SWAP-HIGH-WORD: ~S" place)))))))
+
 (defun call-hooks (kind hooks &key (on-error :error))
   (dolist (hook hooks)
     (handler-case

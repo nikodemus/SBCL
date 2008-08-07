@@ -440,6 +440,11 @@
 ;; be used.
 (defparameter temp-reg-tn r11-tn)
 
+(defparameter *word-register-tns*
+  (map 'vector (lambda (word-reg-name)
+                 (symbol-value (symbolicate word-reg-name "-TN")))
+       (remove nil *word-register-names*)))
+
 ;;; TNs for registers used to pass arguments
 (defparameter *register-arg-tns*
   (mapcar (lambda (register-arg-name)

@@ -153,17 +153,24 @@
 (defknown %raw-instance-ref/complex-single (instance index)
   (complex single-float)
   (flushable always-translatable))
-(defknown %raw-instance-set/complex-single
-    (instance index (complex single-float))
+(defknown %raw-instance-set/complex-single (instance index (complex single-float))
   (complex single-float)
   (unsafe always-translatable))
 (defknown %raw-instance-ref/complex-double (instance index)
   (complex double-float)
   (flushable always-translatable))
-(defknown %raw-instance-set/complex-double
-    (instance index (complex double-float))
+(defknown %raw-instance-set/complex-double (instance index (complex double-float))
   (complex double-float)
   (unsafe always-translatable))
+
+#!+(or x86 x86-64)
+(progn
+  (defknown %raw-instance-incf-low/word (instance index) (values)
+    (unsafe always-translatable))
+  (defknown %raw-instance-compare-and-swap-high/word
+    (instance index sb!vm:half-word sb!vm:half-word)
+    sb!vm:half-word
+    (unsafe always-translatable)))
 
 #!+(or x86 x86-64 ppc)
 (defknown %raw-instance-atomic-incf/word (instance index sb!vm:word) sb!vm:word

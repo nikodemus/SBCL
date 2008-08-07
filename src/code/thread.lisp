@@ -68,8 +68,10 @@ stale value, use MUTEX-OWNER instead."
 (def!struct spinlock
   #!+sb-doc
   "Spinlock type."
-  (name  nil :type (or null thread-name))
-  (value nil))
+  (name nil :type (or null thread-name))
+  (value nil)
+  #!+(or x86 x86-64)
+  (word 0 :type sb!vm:word))
 
 (sb!xc:defmacro with-mutex ((mutex &key (value '*current-thread*) (wait-p t))
                             &body body)
@@ -273,11 +275,11 @@ provided the default value is used for the mutex."
   (defun call-with-recursive-spinlock (function spinlock)
     (declare (function function))
     (dx-let ((inner-lock-p (eq (spinlock-value spinlock) *current-thread*))
-          (got-it nil))
+             (got-it nil))
       (without-interrupts
         (unwind-protect
              (when (or inner-lock-p (setf got-it (allow-with-interrupts
-                                                  (get-spinlock spinlock))))
+                                                   (get-spinlock spinlock))))
                (with-local-interrupts (funcall function)))
           (when got-it
             (release-spinlock spinlock)))))))

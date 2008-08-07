@@ -857,6 +857,10 @@ possibly temporariliy, because it might be used internally."
                ;; Like WITH-LOCKED-HASH-TABLE, but disabled interrupts
                "WITH-LOCKED-SYSTEM-TABLE"
 
+               ;; Low-level structure word frobs
+               "COMPARE-AND-SWAP-HIGH-WORD"
+               "INCF-LOW-WORD"
+
                ;; generic set implementation
                "ADD-TO-XSET"
                "ALLOC-XSET"
@@ -1337,6 +1341,8 @@ is a good idea, but see SB-SYS re. blurring of boundaries."
                #!+(or x86 x86-64 ppc)
                "%RAW-INSTANCE-ATOMIC-INCF/WORD"
                "%RAW-INSTANCE-REF/WORD" "%RAW-INSTANCE-SET/WORD"
+               "%RAW-INSTANCE-INCF-LOW/WORD"
+               "%RAW-INSTANCE-COMPARE-AND-SWAP-HIGH/WORD"
                "%RAW-INSTANCE-REF/SINGLE" "%RAW-INSTANCE-SET/SINGLE"
                "%RAW-INSTANCE-REF/DOUBLE" "%RAW-INSTANCE-SET/DOUBLE"
                "%RAW-INSTANCE-REF/COMPLEX-SINGLE"
@@ -2607,7 +2613,9 @@ structure representations"
                "GENCGC-PAGE-BYTES"
                #!+ppc "PSEUDO-ATOMIC-INTERRUPTED-FLAG"
                #!+ppc "PSEUDO-ATOMIC-FLAG"
-               "GENESIS" "HALT-TRAP" "IGNORE-ME-SC-NUMBER"
+               "GENESIS"
+               "HALF-WORD"
+               "HALT-TRAP" "IGNORE-ME-SC-NUMBER"
                "IMMEDIATE-CHARACTER-SC-NUMBER" "IMMEDIATE-SAP-SC-NUMBER"
                "IMMEDIATE-SC-NUMBER"
                #!+inline-constants "CANONICALIZE-INLINE-CONSTANT"

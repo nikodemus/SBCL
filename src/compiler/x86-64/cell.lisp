@@ -525,6 +525,49 @@
                            adjustment
                            (* index (- n-word-bytes))))))))
 
+(defun make-ea-for-raw-slot/low (object index instance-length)
+  (flet ((make-ea-using-value (value)
+           (make-ea :dword :base object
+                    :index instance-length
+                    :scale n-word-bytes
+                    :disp (- (* (- instance-slots-offset 1)
+                                n-word-bytes)
+                             instance-pointer-lowtag
+                             (* value n-word-bytes)))))
+    (if (typep index 'tn)
+        (sc-case index
+          (any-reg (progn
+                     (break "???")
+                     (make-ea :qword
+                             :base object
+                             :index instance-length
+                             :disp (- (* (- instance-slots-offset 1)
+                                         n-word-bytes)
+                                      instance-pointer-lowtag))))
+          (immediate (make-ea-using-value (tn-value index))))
+        (make-ea-using-value index))))
+
+(defun make-ea-for-raw-slot/high (object index instance-length)
+  (flet ((make-ea-using-value (value)
+           (make-ea :word :base object
+                    :index instance-length
+                    :scale n-word-bytes
+                    :disp (- (* (- instance-slots-offset 1)
+                                n-word-bytes)
+                             instance-pointer-lowtag
+                             (* value n-word-bytes)
+                             (- (/ n-word-bytes 2))))))
+    (if (typep index 'tn)
+        (sc-case index
+          (any-reg (make-ea :dword
+                            :base object
+                            :index instance-length
+                            :disp (- (* (- instance-slots-offset 1)
+                                        n-word-bytes)
+                                     instance-pointer-lowtag)))
+          (immediate (make-ea-using-value (tn-value index))))
+        (make-ea-using-value index))))
+
 (define-vop (raw-instance-ref/word)
   (:translate %raw-instance-ref/word)
   (:policy :fast-safe)
@@ -592,6 +635,50 @@
     (inst shr tmp n-widetag-bits)
     (inst mov (make-ea-for-raw-slot object index tmp) value)
     (move result value)))
+
+(define-vop (raw-instance-incf-low/word)
+  (:translate %raw-instance-incf-low/word)
+  (:policy :fast-safe)
+  (:args (object :scs (descriptor-reg))
+         (index :scs (any-reg immediate)))
+  (:arg-types * tagged-num)
+  (:temporary (:sc unsigned-reg) tmp)
+  (:generator 5
+    (loadw tmp object 0 instance-pointer-lowtag)
+    (inst shr tmp n-widetag-bits)
+    (when (sc-is index any-reg)
+      (inst shl tmp n-fixnum-tag-bits)
+      (inst sub tmp index))
+    (inst inc (make-ea-for-raw-slot/low object index tmp))))
+
+(define-vop (raw-instance-compare-and-swap-high/word)
+  (:translate %raw-instance-compare-and-swap-high/word)
+  (:policy :fast-safe)
+  (:args (object :scs (descriptor-reg))
+         (index :scs (any-reg immediate))
+         (old :scs (unsigned-reg) :target rax)
+         (new :scs (unsigned-reg)))
+  (:arg-types * tagged-num unsigned-num unsigned-num)
+  (:temporary (:sc unsigned-reg :offset rax-offset
+                   :from (:argument 1) :to :result :target result)
+              rax)
+  (:temporary (:sc unsigned-reg) tmp)
+  (:results (result :scs (unsigned-reg)))
+  (:result-types unsigned-num)
+  (:generator 5
+    (loadw tmp object 0 instance-pointer-lowtag)
+    (inst shr tmp n-widetag-bits)
+    (when (sc-is index any-reg)
+      (inst shl tmp n-fixnum-tag-bits)
+      (inst sub tmp index))
+    (move rax old)
+    #!+sb-thread
+    (inst lock)
+    (inst cmpxchg (make-ea-for-raw-slot/high object index tmp)
+          (find-if (lambda (word-reg)
+                     (= (tn-offset word-reg) (tn-offset new)))
+                   *word-register-tns*))
+    (move result rax)))
 
 (define-vop (raw-instance-init/word)
   (:args (object :scs (descriptor-reg))

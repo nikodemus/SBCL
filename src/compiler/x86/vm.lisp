@@ -365,6 +365,11 @@
   (def-misc-reg-tns byte-reg al ah bl bh cl ch dl dh)
   (def-misc-reg-tns single-reg fr0 fr1 fr2 fr3 fr4 fr5 fr6 fr7))
 
+(defparameter *word-register-tns*
+  (map 'vector (lambda (word-reg-name)
+                 (symbol-value (symbolicate word-reg-name "-TN")))
+       (remove nil *word-register-names*)))
+
 ;;; TNs for registers used to pass arguments
 (defparameter *register-arg-tns*
   (mapcar (lambda (register-arg-name)
