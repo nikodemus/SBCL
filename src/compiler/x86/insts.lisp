@@ -154,6 +154,21 @@
   (declare (ignore dstate))
   (sb!disassem:princ16 value stream))
 
+(defun print-imm-data (value stream dstate)
+  (princ value stream)
+
+  ;; We have a literal value which might be a boxed lisp
+  ;; object.  MAKE-LISP-OBJ has some Very Good verification
+  ;; that it is being passed a valid object, so it should
+  ;; do no particular harm to try that, and print the
+  ;; object as a comment if it is valid.
+  (multiple-value-bind
+      (object valid) (make-lisp-obj value nil)
+    (when valid
+      (sb!disassem:note (lambda (stream)
+                          (sb!disassem:prin1-quoted-short object stream))
+                        dstate))))
+
 ;;; Returns either an integer, meaning a register, or a list of
 ;;; (BASE-REG OFFSET INDEX-REG INDEX-SCALE), where any component
 ;;; may be missing or nil to indicate that it's not used or has the
@@ -273,35 +288,41 @@
                (declare (ignore value)) ; always nil anyway
                (sb!disassem:read-suffix
                 (width-bits (inst-operand-size dstate))
-                dstate)))
+                dstate))
+  :printer #'print-imm-data)
 
 (sb!disassem:define-arg-type signed-imm-data
   :prefilter (lambda (value dstate)
                (declare (ignore value)) ; always nil anyway
                (let ((width (inst-operand-size dstate)))
-                 (sb!disassem:read-signed-suffix (width-bits width) dstate))))
+                 (sb!disassem:read-signed-suffix (width-bits width) dstate)))
+  :printer #'print-imm-data)
 
 (sb!disassem:define-arg-type signed-imm-byte
   :prefilter (lambda (value dstate)
                (declare (ignore value)) ; always nil anyway
-               (sb!disassem:read-signed-suffix 8 dstate)))
+               (sb!disassem:read-signed-suffix 8 dstate))
+  :printer #'print-imm-data)
 
 (sb!disassem:define-arg-type signed-imm-dword
   :prefilter (lambda (value dstate)
                (declare (ignore value)) ; always nil anyway
-               (sb!disassem:read-signed-suffix 32 dstate)))
+               (sb!disassem:read-signed-suffix 32 dstate))
+  :printer #'print-imm-data)
 
 (sb!disassem:define-arg-type imm-word
   :prefilter (lambda (value dstate)
                (declare (ignore value)) ; always nil anyway
                (let ((width (inst-word-operand-size dstate)))
-                 (sb!disassem:read-suffix (width-bits width) dstate))))
+                 (sb!disassem:read-suffix (width-bits width) dstate)))
+  :printer #'print-imm-data)
 
 (sb!disassem:define-arg-type signed-imm-word
   :prefilter (lambda (value dstate)
                (declare (ignore value)) ; always nil anyway
                (let ((width (inst-word-operand-size dstate)))
-                 (sb!disassem:read-signed-suffix (width-bits width) dstate))))
+                 (sb!disassem:read-signed-suffix (width-bits width) dstate)))
+  :printer #'print-imm-data)
 
 ;;; needed for the ret imm16 instruction
 (sb!disassem:define-arg-type imm-word-16
