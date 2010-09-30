@@ -1932,6 +1932,23 @@
             dstate))
     (values const valid)))
 
+;;; Store a note about the Thread-Local Storage slot located at OFFSET
+;;; within the TLS block, to be printed as an end-of-line comment
+;;; after the current instruction is disassembled.
+#!+sb-thread
+(defun note-tls-ref (offset dstate)
+  (declare (type offset offset)
+           (type disassem-state dstate))
+  (let* ((thread-object (find 'sb!vm::thread sb!vm:*primitive-objects*
+                              :key #'sb!vm:primitive-object-name))
+         (slot (find (ash offset (- sb!vm:word-shift))
+                     (sb!vm:primitive-object-slots thread-object)
+                     :key #'sb!vm:slot-offset)))
+    (when slot
+      (note (lambda (stream)
+              (princ `(tls ,(sb!vm:slot-name slot)) stream))
+            dstate))))
+
 ;;; If the memory address located NIL-BYTE-OFFSET bytes from the
 ;;; constant NIL is a valid slot in a symbol, store a note describing
 ;;; which symbol and slot, to be printed as an end-of-line comment
