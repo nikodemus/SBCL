@@ -54,6 +54,9 @@
             (progn
               (sb!disassem:princ16 offset stream)
               (or (minusp offset)
+                  #!+sb-thread
+                  (and (sb!disassem:dstate-get-inst-prop dstate 'fs-segment-prefix)
+                       (or (sb!disassem:note-tls-ref offset dstate) t))
                   (nth-value 1
                     (sb!disassem::note-code-constant-absolute offset dstate))
                   (and (>= static-space-start offset static-space-end)
