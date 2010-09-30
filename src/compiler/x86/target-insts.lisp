@@ -52,6 +52,9 @@
               (or (minusp offset)
                   (nth-value 1
                     (sb!disassem::note-code-constant-absolute offset dstate))
+                  (and (>= static-space-start offset static-space-end)
+                       (sb!disassem:maybe-note-nil-indexed-symbol-slot-ref
+                        (- offset nil-value) dstate))
                   (sb!disassem:maybe-note-assembler-routine offset
                                                             nil
                                                             dstate)))
