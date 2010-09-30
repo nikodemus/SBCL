@@ -1747,12 +1747,14 @@
            (values nil nil))
         (let* ((field (car slots-tail))
                (slot-offset (words-to-bytes (car field)))
-               (maybe-symbol-addr (- address slot-offset))
-               (maybe-symbol
-                (sb!kernel:make-lisp-obj
-                 (+ maybe-symbol-addr sb!vm:other-pointer-lowtag))))
-          (when (symbolp maybe-symbol)
-            (return (values maybe-symbol (cdr field))))))))
+               (maybe-symbol-addr (- address slot-offset)))
+          (multiple-value-bind
+                (maybe-symbol valid)
+              (sb!kernel:make-lisp-obj
+               (+ maybe-symbol-addr sb!vm:other-pointer-lowtag)
+               nil)
+            (when (and valid (symbolp maybe-symbol))
+              (return (values maybe-symbol (cdr field)))))))))
 
 (defvar *address-of-nil-object* (sb!kernel:get-lisp-obj-address nil))
 
