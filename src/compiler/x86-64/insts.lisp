@@ -411,7 +411,21 @@
                (let ((width (width-bits (inst-operand-size dstate))))
                  (when (= width 64)
                    (setf width 32))
-                 (sb!disassem:read-signed-suffix width dstate))))
+                 (sb!disassem:read-signed-suffix width dstate)))
+  :printer (lambda (value stream dstate)
+             (princ value stream)
+             ;; We have a literal value which might be a boxed lisp
+             ;; object.  MAKE-LISP-OBJ has some Very Good verification
+             ;; that it is being passed a valid object, so it should
+             ;; do no particular harm to try that, and print the
+             ;; object as a comment if it is valid.
+             (multiple-value-bind
+                   (object valid)
+                 (make-lisp-obj value nil)
+               (when valid
+                 (sb!disassem:note (lambda (stream)
+                                     (sb!disassem:prin1-quoted-short object stream))
+                                   dstate)))))
 
 ;;; Used by the variant of the MOV instruction with opcode B8 which can
 ;;; move immediates of all sizes (i.e. including :qword) into a
