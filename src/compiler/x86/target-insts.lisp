@@ -23,6 +23,10 @@
   (when print-size-p
     (princ (inst-operand-size dstate) stream)
     (princ '| PTR | stream))
+  (when (sb!disassem:dstate-get-inst-prop dstate 'fs-segment-prefix)
+    (princ "FS:"))
+  (when (sb!disassem:dstate-get-inst-prop dstate 'gs-segment-prefix)
+    (princ "GS:"))
   (write-char #\[ stream)
   (let ((firstp t))
     (macrolet ((pel ((var val) &body body)

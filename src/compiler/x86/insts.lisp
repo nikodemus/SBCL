@@ -233,6 +233,16 @@
            (type sb!disassem:disassem-state dstate))
   (sb!disassem:dstate-put-inst-prop dstate 'operand-size-16))
 
+;;; This prefilter is used solely for its side effect, namely to put
+;;; one of the properties [FG]S-SEGMENT-PREFIX into the DSTATE.
+;;; Unlike PREFILTER-X66, this prefilter only catches the low bit of
+;;; the prefix byte.
+(defun prefilter-seg (value dstate)
+  (declare (type bit value)
+           (type sb!disassem:disassem-state dstate))
+  (sb!disassem:dstate-put-inst-prop
+   dstate (elt '(fs-segment-prefix gs-segment-prefix) value)))
+
 (defun read-address (value dstate)
   (declare (ignore value))              ; always nil anyway
   (sb!disassem:read-suffix (width-bits *default-address-size*) dstate))
@@ -370,6 +380,11 @@
 (sb!disassem:define-arg-type x66
   :prefilter #'prefilter-x66)
 
+;;; Used to capture the effect of the #x64 and #x65 segment override
+;;; prefixes.
+(sb!disassem:define-arg-type seg
+  :prefilter #'prefilter-seg)
+
 (eval-when (:compile-toplevel :load-toplevel :execute)
 (defparameter *conditions*
   '((:o . 0)
@@ -436,6 +451,25 @@
   (accum :type 'accum)
   (imm))
 
+(sb!disassem:define-instruction-format (seg-simple 16)
+  (seg-prefix :field (byte 7 1) :value #x32)
+  (seg        :field (byte 1 0) :type 'seg)
+  (op         :field (byte 7 9))
+  (width      :field (byte 1 8) :type 'width)
+  ;; optional fields
+  (accum :type 'accum)
+  (imm))
+
+(sb!disassem:define-instruction-format (seg-x66-simple 24)
+  (seg-prefix :field (byte 7 1)  :value #x32)
+  (seg        :field (byte 1 0)  :type 'seg)
+  (x66        :field (byte 8 8)  :type 'x66 :value #x66)
+  (op         :field (byte 7 17))
+  (width      :field (byte 1 16) :type 'width)
+  ;; optional fields
+  (accum :type 'accum)
+  (imm))
+
 (sb!disassem:define-instruction-format (two-bytes 16
                                         :default-printer '(:name))
   (op :fields (list (byte 8 0) (byte 8 8))))
@@ -448,6 +482,14 @@
 (sb!disassem:define-instruction-format (x66-simple-dir 16 :include 'x66-simple)
   (op :field (byte 6 10))
   (dir :field (byte 1 9)))
+
+(sb!disassem:define-instruction-format (seg-simple-dir 16 :include 'seg-simple)
+  (op :field (byte 6 10))
+  (dir :field (byte 1 9)))
+
+(sb!disassem:define-instruction-format (seg-x66-simple-dir 24 :include 'seg-x66-simple)
+  (op :field (byte 6 18))
+  (dir :field (byte 1 17)))
 
 ;;; Same as simple, but with the immediate value occurring by default,
 ;;; and with an appropiate printer.
@@ -534,6 +576,33 @@
   ;; optional fields
   (imm))
 
+(sb!disassem:define-instruction-format (seg-reg-reg/mem 24
+                                        :default-printer
+                                        `(:name :tab reg ", " reg/mem))
+  (seg-prefix :field (byte 7 1) :value #x32)
+  (seg     :field (byte 1 0) :type 'seg)
+  (op      :field (byte 7 9))
+  (width   :field (byte 1 8)    :type 'width)
+  (reg/mem :fields (list (byte 2 22) (byte 3 16))
+                                :type 'reg/mem)
+  (reg     :field (byte 3 19)   :type 'reg)
+  ;; optional fields
+  (imm))
+
+(sb!disassem:define-instruction-format (seg-x66-reg-reg/mem 32
+                                        :default-printer
+                                        `(:name :tab reg ", " reg/mem))
+  (seg-prefix :field (byte 7 1) :value #x32)
+  (seg     :field (byte 1 0) :type 'seg)
+  (x66     :field (byte 8 8) :type 'x66 :value #x66)
+  (op      :field (byte 7 17))
+  (width   :field (byte 1 16)   :type 'width)
+  (reg/mem :fields (list (byte 2 30) (byte 3 24))
+                                :type 'reg/mem)
+  (reg     :field (byte 3 27)   :type 'reg)
+  ;; optional fields
+  (imm))
+
 ;;; same as reg-reg/mem, but with direction bit
 (sb!disassem:define-instruction-format (reg-reg/mem-dir 16
                                         :include 'reg-reg/mem
@@ -552,6 +621,24 @@
                                           ,(swap-if 'dir 'reg/mem ", " 'reg)))
   (op  :field (byte 6 10))
   (dir :field (byte 1 9)))
+
+(sb!disassem:define-instruction-format (seg-reg-reg/mem-dir 24
+                                        :include 'seg-reg-reg/mem
+                                        :default-printer
+                                        `(:name
+                                          :tab
+                                          ,(swap-if 'dir 'reg/mem ", " 'reg)))
+  (op  :field (byte 6 10))
+  (dir :field (byte 1 9)))
+
+(sb!disassem:define-instruction-format (seg-x66-reg-reg/mem-dir 32
+                                        :include 'seg-x66-reg-reg/mem
+                                        :default-printer
+                                        `(:name
+                                          :tab
+                                          ,(swap-if 'dir 'reg/mem ", " 'reg)))
+  (op  :field (byte 6 18))
+  (dir :field (byte 1 17)))
 
 ;;; Same as reg-rem/mem, but uses the reg field as a second op code.
 (sb!disassem:define-instruction-format (reg/mem 16
@@ -573,6 +660,29 @@
   ;; optional fields
   (imm))
 
+(sb!disassem:define-instruction-format (seg-reg/mem 24
+                                        :default-printer '(:name :tab reg/mem))
+  (seg-prefix :field (byte 7 1) :value #x32)
+  (seg     :field (byte 1 0) :type 'seg)
+  (op      :fields (list (byte 7 9) (byte 3 19)))
+  (width   :field (byte 1 8)    :type 'width)
+  (reg/mem :fields (list (byte 2 22) (byte 3 16))
+                                :type 'sized-reg/mem)
+  ;; optional fields
+  (imm))
+
+(sb!disassem:define-instruction-format (seg-x66-reg/mem 32
+                                        :default-printer '(:name :tab reg/mem))
+  (seg-prefix :field (byte 7 1) :value #x32)
+  (seg     :field (byte 1 0) :type 'seg)
+  (x66   :field (byte 8 8) :type 'x66 :value #x66)
+  (op      :fields (list (byte 7 17) (byte 3 27)))
+  (width   :field (byte 1 16)   :type 'width)
+  (reg/mem :fields (list (byte 2 30) (byte 3 24))
+                                :type 'sized-reg/mem)
+  ;; optional fields
+  (imm))
+
 ;;; Same as reg/mem, but with the immediate value occurring by default,
 ;;; and with an appropiate printer.
 (sb!disassem:define-instruction-format (reg/mem-imm 16
@@ -584,6 +694,20 @@
 
 (sb!disassem:define-instruction-format (x66-reg/mem-imm 24
                                         :include 'x66-reg/mem
+                                        :default-printer
+                                        '(:name :tab reg/mem ", " imm))
+  (reg/mem :type 'sized-reg/mem)
+  (imm     :type 'imm-data))
+
+(sb!disassem:define-instruction-format (seg-reg/mem-imm 24
+                                        :include 'seg-reg/mem
+                                        :default-printer
+                                        '(:name :tab reg/mem ", " imm))
+  (reg/mem :type 'sized-reg/mem)
+  (imm     :type 'imm-data))
+
+(sb!disassem:define-instruction-format (seg-x66-reg/mem-imm 32
+                                        :include 'seg-x66-reg/mem
                                         :default-printer
                                         '(:name :tab reg/mem ", " imm))
   (reg/mem :type 'sized-reg/mem)
@@ -626,6 +750,38 @@
   (reg/mem :fields (list (byte 2 30) (byte 3 24))
                                 :type 'reg/mem)
   (reg     :field (byte 3 27)   :type 'reg)
+  ;; optional fields
+  (imm))
+
+(sb!disassem:define-instruction-format (seg-ext-reg-reg/mem 32
+                                        :default-printer
+                                        `(:name :tab reg ", " reg/mem))
+  (seg-prefix :field (byte 7 1) :value #x32)
+  (seg     :field (byte 1 0) :type 'seg)
+  (prefix  :field (byte 8 8)    :value #b00001111)
+  (op      :field (byte 7 17))
+  (width   :field (byte 1 16)    :type 'width)
+  (reg/mem :fields (list (byte 2 30) (byte 3 24))
+                                :type 'reg/mem)
+  (reg     :field (byte 3 27)   :type 'reg)
+  ;; optional fields
+  (imm))
+
+;; Supposedly instruction-widths max out at 32 bits, but there are
+;; some x86-64 instruction formats at 40 bits... Of course, the real
+;; restriction could be to word-sized integers.
+(sb!disassem:define-instruction-format (seg-x66-ext-reg-reg/mem 40
+                                        :default-printer
+                                        `(:name :tab reg ", " reg/mem))
+  (seg-prefix :field (byte 7 1) :value #x32)
+  (seg     :field (byte 1 0) :type 'seg)
+  (x66   :field (byte 8 8) :type 'x66 :value #x66)
+  (prefix  :field (byte 8 16)   :value #b00001111)
+  (op      :field (byte 7 25))
+  (width   :field (byte 1 24)    :type 'width)
+  (reg/mem :fields (list (byte 2 38) (byte 3 32))
+                                :type 'reg/mem)
+  (reg     :field (byte 3 35)   :type 'reg)
   ;; optional fields
   (imm))
 
@@ -1104,12 +1260,20 @@
             `(:name :tab ,(swap-if 'dir 'accum ", " '("[" imm "]"))))
   (:printer x66-simple-dir ((op #b101000) (imm nil :type 'imm-addr))
             `(:name :tab ,(swap-if 'dir 'accum ", " '("[" imm "]"))))
+  (:printer seg-simple-dir ((op #b101000) (imm nil :type 'imm-addr))
+                `(:name :tab ,(swap-if 'dir 'accum ", " '("[" imm "]"))))
+  (:printer seg-x66-simple-dir ((op #b101000) (imm nil :type 'imm-addr))
+                `(:name :tab ,(swap-if 'dir 'accum ", " '("[" imm "]"))))
   ;; register to/from register/memory
   (:printer reg-reg/mem-dir ((op #b100010)))
   (:printer x66-reg-reg/mem-dir ((op #b100010)))
+  (:printer seg-reg-reg/mem-dir ((op #b100010)))
+  (:printer seg-x66-reg-reg/mem-dir ((op #b100010)))
   ;; immediate to register/memory
   (:printer reg/mem-imm ((op '(#b1100011 #b000))))
   (:printer x66-reg/mem-imm ((op '(#b1100011 #b000))))
+  (:printer seg-reg/mem-imm ((op '(#b1100011 #b000))))
+  (:printer seg-x66-reg/mem-imm ((op '(#b1100011 #b000))))
 
   (:emitter
    (emit-prefix segment prefix)
@@ -1201,6 +1365,8 @@
   ;; register/memory
   (:printer reg/mem ((op '(#b1111111 #b110)) (width 1)))
   (:printer x66-reg/mem ((op '(#b1111111 #b110)) (width 1)))
+  (:printer seg-reg/mem ((op '(#b1111111 #b110)) (width 1)))
+  (:printer seg-x66-reg/mem ((op '(#b1111111 #b110)) (width 1)))
   ;; immediate
   (:printer byte ((op #b01101010) (imm nil :type 'signed-imm-byte))
             '(:name :tab imm))
@@ -1297,6 +1463,8 @@
   ;; Register/Memory with Register.
   (:printer ext-reg-reg/mem ((op #b1011000)) '(:name :tab reg/mem ", " reg))
   (:printer x66-ext-reg-reg/mem ((op #b1011000)) '(:name :tab reg/mem ", " reg))
+  (:printer seg-ext-reg-reg/mem ((op #b1011000)) '(:name :tab reg/mem ", " reg))
+  (:printer seg-x66-ext-reg-reg/mem ((op #b1011000)) '(:name :tab reg/mem ", " reg))
   (:emitter
    (aver (register-p src))
    (emit-prefix segment prefix)
@@ -1317,16 +1485,6 @@
      (emit-byte segment #x64))
     (:gs
      (emit-byte segment #x65))))
-
-(define-instruction fs-segment-prefix (segment)
-  (:printer byte ((op #b01100100)))
-  (:emitter
-   (bug "FS emitted as a separate instruction!")))
-
-(define-instruction gs-segment-prefix (segment)
-  (:printer byte ((op #b01100101)))
-  (:emitter
-   (bug "GS emitted as a separate instruction!")))
 
 ;;;; flag control instructions
 
@@ -1441,12 +1599,20 @@
       (x66-accum-imm ((op ,(dpb subop (byte 3 2) #b0000010))))
       (reg/mem-imm ((op (#b1000000 ,subop))))
       (x66-reg/mem-imm ((op (#b1000000 ,subop))))
+      (seg-reg/mem-imm ((op (#b1000000 ,subop))))
+      (seg-x66-reg/mem-imm ((op (#b1000000 ,subop))))
       (reg/mem-imm ((op (#b1000001 ,subop))
                     (imm nil :type signed-imm-byte)))
       (x66-reg/mem-imm ((op (#b1000001 ,subop))
                         (imm nil :type signed-imm-byte)))
+      (seg-reg/mem-imm ((op (#b1000001 ,subop))
+                        (imm nil :type signed-imm-byte)))
+      (seg-x66-reg/mem-imm ((op (#b1000001 ,subop))
+                            (imm nil :type signed-imm-byte)))
       (reg-reg/mem-dir ((op ,(dpb subop (byte 3 1) #b000000))))
-      (x66-reg-reg/mem-dir ((op ,(dpb subop (byte 3 1) #b000000))))))
+      (x66-reg-reg/mem-dir ((op ,(dpb subop (byte 3 1) #b000000))))
+      (seg-reg-reg/mem-dir ((op ,(dpb subop (byte 3 1) #b000000))))
+      (seg-x66-reg-reg/mem-dir ((op ,(dpb subop (byte 3 1) #b000000))))))
   )
 
 (define-instruction add (segment dst src &optional prefix)
@@ -1659,6 +1825,8 @@
   ;; Register/Memory with Register.
   (:printer ext-reg-reg/mem ((op #b1100000)) '(:name :tab reg/mem ", " reg))
   (:printer x66-ext-reg-reg/mem ((op #b1100000)) '(:name :tab reg/mem ", " reg))
+  (:printer seg-ext-reg-reg/mem ((op #b1100000)) '(:name :tab reg/mem ", " reg))
+  (:printer seg-x66-ext-reg-reg/mem ((op #b1100000)) '(:name :tab reg/mem ", " reg))
   (:emitter
    (aver (register-p src))
    (emit-prefix segment prefix)
