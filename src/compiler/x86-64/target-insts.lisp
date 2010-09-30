@@ -31,7 +31,7 @@
     (princ width stream)
     (princ '| PTR | stream))
   (write-char #\[ stream)
-  (let ((firstp t) (rip-p nil))
+  (let ((firstp t) (rip-p nil) #!+sb-thread (thread-p nil))
     (macrolet ((pel ((var val) &body body)
                  ;; Print an element of the address, maybe with
                  ;; a leading separator.
@@ -44,6 +44,10 @@
       (pel (base-reg (first value))
         (cond ((eql 'rip base-reg)
                (setf rip-p t)
+               (princ base-reg stream))
+              #!+sb-thread
+              ((eql (ash r12-offset -1) base-reg)
+               (setf thread-p t)
                (princ base-reg stream))
               (t
                (print-addr-reg base-reg stream dstate))))
@@ -68,6 +72,10 @@
                      (sb!disassem:maybe-note-assembler-routine addr
                                                                nil
                                                                dstate)))))
+            #!+sb-thread
+            (thread-p
+             (princ offset stream)
+             (sb!disassem:note-tls-ref offset dstate))
             (firstp
              (progn
                (sb!disassem:princ16 offset stream)
