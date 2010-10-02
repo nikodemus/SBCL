@@ -154,6 +154,24 @@
   (declare (ignore dstate))
   (sb!disassem:princ16 value stream))
 
+;; KLUDGE: Someone didn't define this already, and we need it now, so
+;; we need to find it from just the package data.  This is an array,
+;; indexed by (byte 6 2) of the widetag, containing the name, built by
+;; a nasty hack.  Among other things, it relies on there being exactly
+;; 62 defined widetags.
+(defparameter *widetag-names*
+  (make-array 64 :initial-contents
+              '(nil nil .
+                #.(let ((widetag-names nil))
+                    (do-symbols (sym :sb!vm)
+                                (when (and (boundp sym)
+                                           (constantp sym)
+                                           (integerp (symbol-value sym))
+                                           (eql 0 (search (reverse "-WIDETAG") (reverse (symbol-name sym)))))
+                                  (push sym widetag-names)))
+                    (setf widetag-names (sort widetag-names #'< :key #'symbol-value))
+                    widetag-names))))
+
 (defun print-imm-data (value stream dstate)
   (princ value stream)
 
@@ -164,10 +182,23 @@
   ;; object as a comment if it is valid.
   (multiple-value-bind
       (object valid) (make-lisp-obj value nil)
-    (when valid
-      (sb!disassem:note (lambda (stream)
-                          (sb!disassem:prin1-quoted-short object stream))
-                        dstate))))
+    (cond
+     ;; Make a note of "valid" objects.
+     (valid
+      (sb!disassem:note
+       (lambda (stream)
+         (sb!disassem:prin1-quoted-short object stream))
+       dstate))
+
+     ;; Make a note of probable widetags.
+     ((and (<= (integer-length value) 8)
+           (= (logand 3 value) other-immediate-0-lowtag))
+      (let ((widetag-name (aref *widetag-names* (ash value -2))))
+        (when widetag-name
+          (sb!disassem:note
+           (lambda (stream)
+             (princ `(tag ,widetag-name) stream))
+           dstate)))))))
 
 ;;; Returns either an integer, meaning a register, or a list of
 ;;; (BASE-REG OFFSET INDEX-REG INDEX-SCALE), where any component
