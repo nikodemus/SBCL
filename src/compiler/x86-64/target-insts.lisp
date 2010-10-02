@@ -48,7 +48,7 @@
               #!+sb-thread
               ((eql (ash r12-offset -1) base-reg)
                (setf thread-p t)
-               (princ base-reg stream))
+               (print-addr-reg base-reg stream dstate))
               (t
                (print-addr-reg base-reg stream dstate))))
       (pel (index-reg (third value))
