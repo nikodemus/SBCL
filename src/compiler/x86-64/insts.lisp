@@ -231,6 +231,52 @@
       (print-xmmreg value stream dstate)
     (print-mem-access value (inst-operand-size dstate) stream dstate)))
 
+;; KLUDGE: Someone didn't define this already, and we need it now, so
+;; we need to find it from just the package data.  This is an array,
+;; indexed by (byte 6 2) of the widetag, containing the name, built by
+;; a nasty hack.  Among other things, it relies on there being exactly
+;; 62^H^H 60 defined widetags (two fewer on 64-bit ports).
+(defparameter *widetag-names*
+  (make-array 64 :initial-contents
+              '(nil nil nil nil .
+                #.(let ((widetag-names nil))
+                    (do-symbols (sym :sb!vm)
+                                (when (and (boundp sym)
+                                           (constantp sym)
+                                           (integerp (symbol-value sym))
+                                           (eql 0 (search (reverse "-WIDETAG") (reverse (symbol-name sym)))))
+                                  (push sym widetag-names)))
+                    (setf widetag-names (sort widetag-names #'< :key #'symbol-value))
+                    widetag-names))))
+
+(defun print-imm-data (value stream dstate)
+  (princ value stream)
+
+  ;; We have a literal value which might be a boxed lisp
+  ;; object.  MAKE-LISP-OBJ has some Very Good verification
+  ;; that it is being passed a valid object, so it should
+  ;; do no particular harm to try that, and print the
+  ;; object as a comment if it is valid.
+  (multiple-value-bind
+      (object valid) (make-lisp-obj value nil)
+    (cond
+     ;; Make a note of "valid" objects.
+     (valid
+      (sb!disassem:note
+       (lambda (stream)
+         (sb!disassem:prin1-quoted-short object stream))
+       dstate))
+
+     ;; Make a note of probable widetags.
+     ((and (<= (integer-length value) 8)
+           (= (logand 3 value) other-immediate-0-lowtag))
+      (let ((widetag-name (aref *widetag-names* (ash value -2))))
+        (when widetag-name
+          (sb!disassem:note
+           (lambda (stream)
+             (princ `(tag ,widetag-name) stream))
+           dstate)))))))
+
 ;;; This prefilter is used solely for its side effects, namely to put
 ;;; the bits found in the REX prefix into the DSTATE for use by other
 ;;; prefilters and by printers.
@@ -412,20 +458,7 @@
                  (when (= width 64)
                    (setf width 32))
                  (sb!disassem:read-signed-suffix width dstate)))
-  :printer (lambda (value stream dstate)
-             (princ value stream)
-             ;; We have a literal value which might be a boxed lisp
-             ;; object.  MAKE-LISP-OBJ has some Very Good verification
-             ;; that it is being passed a valid object, so it should
-             ;; do no particular harm to try that, and print the
-             ;; object as a comment if it is valid.
-             (multiple-value-bind
-                   (object valid)
-                 (make-lisp-obj value nil)
-               (when valid
-                 (sb!disassem:note (lambda (stream)
-                                     (sb!disassem:prin1-quoted-short object stream))
-                                   dstate)))))
+  :printer #'print-imm-data)
 
 ;;; Used by the variant of the MOV instruction with opcode B8 which can
 ;;; move immediates of all sizes (i.e. including :qword) into a
@@ -435,7 +468,8 @@
                (declare (ignore value)) ; always nil anyway
                (sb!disassem:read-signed-suffix
                 (width-bits (inst-operand-size dstate))
-                dstate)))
+                dstate))
+  :printer #'print-imm-data)
 
 ;;; Used by those instructions that have a default operand size of
 ;;; :qword. Nevertheless the immediate is at most of size :dword.
@@ -448,17 +482,20 @@
                              (inst-operand-size-default-qword dstate))))
                  (when (= width 64)
                    (setf width 32))
-                 (sb!disassem:read-signed-suffix width dstate))))
+                 (sb!disassem:read-signed-suffix width dstate)))
+  :printer #'print-imm-data)
 
 (sb!disassem:define-arg-type signed-imm-byte
   :prefilter (lambda (value dstate)
                (declare (ignore value)) ; always nil anyway
-               (sb!disassem:read-signed-suffix 8 dstate)))
+               (sb!disassem:read-signed-suffix 8 dstate))
+  :printer #'print-imm-data)
 
 (sb!disassem:define-arg-type imm-byte
   :prefilter (lambda (value dstate)
                (declare (ignore value)) ; always nil anyway
-               (sb!disassem:read-suffix 8 dstate)))
+               (sb!disassem:read-suffix 8 dstate))
+  :printer #'print-imm-data)
 
 ;;; needed for the ret imm16 instruction
 (sb!disassem:define-arg-type imm-word-16
