@@ -197,7 +197,7 @@
         (when widetag-name
           (sb!disassem:note
            (lambda (stream)
-             (princ `(tag ,widetag-name) stream))
+             (princ widetag-name stream))
            dstate)))))))
 
 ;;; Returns either an integer, meaning a register, or a list of

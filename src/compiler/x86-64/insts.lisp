@@ -274,7 +274,7 @@
         (when widetag-name
           (sb!disassem:note
            (lambda (stream)
-             (princ `(tag ,widetag-name) stream))
+             (princ widetag-name stream))
            dstate)))))))
 
 ;;; This prefilter is used solely for its side effects, namely to put
