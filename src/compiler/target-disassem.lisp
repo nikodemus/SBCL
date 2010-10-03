@@ -1271,20 +1271,21 @@
           (storage-info-for-debug-fun debug-fun))
     (add-source-tracking-hooks segment debug-fun sfcache)
     (let ((kind (sb!di:debug-fun-kind debug-fun)))
-      (flet ((add-new-hook (n)
+      (flet ((add-new-hook (comment)
                (push (make-offs-hook
+                      :before-address t
                       :offset 0
                       :fun (lambda (stream dstate)
-                             (declare (ignore stream))
-                             (note n dstate)))
+                             (declare (ignore dstate))
+                             (when stream
+                               (format stream "~&~%; ~A~%" comment))))
                      (seg-hooks segment))))
         (case kind
           (:external)
           ((nil)
            (add-new-hook "no-arg-parsing entry point"))
           (t
-           (add-new-hook (lambda (stream)
-                           (format stream "~S entry point" kind)))))))))
+           (add-new-hook (format nil "~S entry point" kind))))))))
 
 ;;; Return a list of the segments of memory containing machine code
 ;;; instructions for FUNCTION.
