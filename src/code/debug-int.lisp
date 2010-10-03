@@ -1958,33 +1958,34 @@ register."
 ;;; GC, and might also arise in debug variable locations when
 ;;; those variables are invalid.)
 (defun make-lisp-obj (val &optional (errorp t))
-  (if (or
-       ;; fixnum
-       (zerop (logand val sb!vm:fixnum-tag-mask))
-       ;; immediate single float, 64-bit only
-       #!+#.(cl:if (cl:= sb!vm::n-machine-word-bits 64) '(and) '(or))
-       (= (logand val #xff) sb!vm:single-float-widetag)
-       ;; character
-       (and (zerop (logandc2 val #x1fffffff)) ; Top bits zero
-            (= (logand val #xff) sb!vm:character-widetag)) ; char tag
-       ;; unbound marker
-       (= val sb!vm:unbound-marker-widetag)
-       ;; pointer
-       #!+gencgc
-       (not (zerop (valid-lisp-pointer-p (int-sap val))))
-       ;; FIXME: There is no fundamental reason not to use the above
-       ;; function on other platforms as well, but I didn't have
-       ;; others available while doing this. --NS 2007-06-21
-       #!-gencgc
-       (and (logbitp 0 val)
-            (or (< sb!vm:read-only-space-start val
-                   (* sb!vm:*read-only-space-free-pointer*
-                      sb!vm:n-word-bytes))
-                (< sb!vm:static-space-start val
-                   (* sb!vm:*static-space-free-pointer*
-                      sb!vm:n-word-bytes))
-                (< (current-dynamic-space-start) val
-                   (sap-int (dynamic-space-free-pointer))))))
+  (if (and (plusp val)
+           (or
+            ;; fixnum
+            (zerop (logand val sb!vm:fixnum-tag-mask))
+            ;; immediate single float, 64-bit only
+            #!+#.(cl:if (cl:= sb!vm::n-machine-word-bits 64) '(and) '(or))
+            (= (logand val #xff) sb!vm:single-float-widetag)
+            ;; character
+            (and (zerop (logandc2 val #x1fffffff)) ; Top bits zero
+                 (= (logand val #xff) sb!vm:character-widetag)) ; char tag
+            ;; unbound marker
+            (= val sb!vm:unbound-marker-widetag)
+            ;; pointer
+            #!+gencgc
+            (not (zerop (valid-lisp-pointer-p (int-sap val))))
+            ;; FIXME: There is no fundamental reason not to use the above
+            ;; function on other platforms as well, but I didn't have
+            ;; others available while doing this. --NS 2007-06-21
+            #!-gencgc
+            (and (logbitp 0 val)
+                 (or (< sb!vm:read-only-space-start val
+                        (* sb!vm:*read-only-space-free-pointer*
+                           sb!vm:n-word-bytes))
+                     (< sb!vm:static-space-start val
+                        (* sb!vm:*static-space-free-pointer*
+                           sb!vm:n-word-bytes))
+                     (< (current-dynamic-space-start) val
+                        (sap-int (dynamic-space-free-pointer)))))))
       (values (%make-lisp-obj val) t)
       (if errorp
           (error "~S is not a valid argument to ~S"
