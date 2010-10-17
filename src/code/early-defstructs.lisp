@@ -13,9 +13,14 @@
 
 (!set-up-structure-object-class)
 
-#.`(progn
-     ,@(mapcar (lambda (args)
-                 `(defstruct ,@args))
-               (sb-cold:read-from-file "src/code/early-defstruct-args.lisp-expr")))
+(declaim (inline sb!alien-internals:make-alien-value))
+(defstruct sb!alien-internals:alien-value
+  (sap (missing-arg) :type sb!sys:system-area-pointer)
+  (type (missing-arg) :type sb!alien-internals:alien-type))
+
+;; #.`(progn
+;;      ,@(mapcar (lambda (args)
+;;                  `(defstruct ,@args))
+;;                (sb-cold:read-from-file "src/code/early-defstruct-args.lisp-expr")))
 
 (/show0 "done with early-defstructs.lisp")

@@ -27,6 +27,17 @@
         ((> bits 8) 16)
         ((> bits 1) 8)
         (t 1)))
+
+(defun %sap-alien (sap type)
+  (declare (type system-area-pointer sap)
+           (type alien-type type))
+  (make-alien-value :sap sap :type type))
+
+(defun alien-sap (alien)
+  #!+sb-doc
+  "Return a System-Area-Pointer pointing to Alien's data."
+  (declare (type alien-value alien))
+  (alien-value-sap alien))
 
 ;;;; ALIEN-TYPE-INFO stuff
 
@@ -116,19 +127,19 @@
            (create-alien-type-class-if-necessary ',name ',defstruct-name
                                                  ',(or include 'root)))
          (def!struct (,defstruct-name
-                        (:include ,include-defstruct
-                                  (class ',name)
-                                  ,@overrides)
-                        (:constructor
-                         ,(symbolicate "MAKE-" defstruct-name)
-                         (&key class bits alignment
-                               ,@(mapcar (lambda (x)
-                                           (if (atom x) x (car x)))
-                                         slots)
-                               ,@include-args
-                               ;; KLUDGE
-                               &aux (alignment (or alignment (guess-alignment bits))))))
-           ,@slots)))))
+                         (:include ,include-defstruct
+                                   (class ',name)
+                                   ,@overrides)
+                         (:constructor
+                          ,(symbolicate "MAKE-" defstruct-name)
+                          (&key class bits alignment
+                                ,@(mapcar (lambda (x)
+                                            (if (atom x) x (car x)))
+                                          slots)
+                                ,@include-args
+                                ;; KLUDGE
+                                &aux (alignment (or alignment (guess-alignment bits))))))
+             ,@slots)))))
 
 (def!macro define-alien-type-method ((class method) lambda-list &rest body)
   (let ((defun-name (symbolicate class "-" method "-METHOD")))
@@ -333,6 +344,18 @@
     name))
 
 ;;;; the root alien type
+;;;;
+;;;; We best-effort intern alien types (if something slips through, it doesn't
+;;;; break anything -- but hurts performance) in order cache various functions
+;;;; in the type objecs.
+;;;;
+;;;; The location where interned types are stored depends on the type:
+;;;; integer types are stored in vectors indexed by the bit-width of the type,
+;;;; singleton types each have their own global variable. Structure and union
+;;;; types live (for historical reasons mostly) in the globaldb.
+;;;;
+;;;; Array types are not interned, but are instead built with the various
+;;;; functions predefined.
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (create-alien-type-class-if-necessary 'root 'alien-type nil))
@@ -343,7 +366,13 @@
                                             &aux (alignment (or alignment (guess-alignment bits))))))
   (class 'root :type symbol)
   (bits nil :type (or null unsigned-byte))
-  (alignment nil :type (or null unsigned-byte)))
+  (alignment nil :type (or null unsigned-byte))
+  (pointer-type nil :type (or null alien-type))
+  (naturalize nil :type (or null function))
+  (deport nil :type (or null function))
+  (deport-alloc nil :type (or null function))
+  (extract nil :type (or null function))
+  (deposit nil :type (or null function)))
 (def!method print-object ((type alien-type) stream)
   (print-unreadable-object (type stream :type t)
     (prin1 (unparse-alien-type type) stream)))
@@ -352,9 +381,13 @@
 
 (define-alien-type-class (system-area-pointer))
 
+(defglobal **alien-system-area-pointer-type** nil)
+
 (define-alien-type-translator system-area-pointer ()
-  (make-alien-system-area-pointer-type
-   :bits #!-alpha sb!vm:n-word-bits #!+alpha 64))
+  (or **alien-system-area-pointer-type**
+      (setf **alien-system-area-pointer-type**
+            (make-alien-system-area-pointer-type
+             :bits #!-alpha sb!vm:n-word-bits #!+alpha 64))))
 
 (define-alien-type-method (system-area-pointer :unparse) (type)
   (declare (ignore type))
@@ -568,14 +601,32 @@
 (define-alien-type-class (integer)
   (signed t :type (member t nil)))
 
+;; Cache from 0 to 128 bits long integer types.
+(defconstant +alien-integer-type-cache-size+ 129)
+
+(defglobal **alien-unsigned-integer-types** (make-array +alien-integer-type-cache-size+
+                                                        :initial-element nil))
+
+(defglobal **alien-signed-integer-types** (make-array +alien-integer-type-cache-size+
+                                                      :initial-element nil))
+
+(defun ensure-alien-integer-type (table bits signed)
+  (if (< bits +alien-integer-type-cache-size+)
+      ;; Worst case scenario is that competing threads initialize the
+      ;; type cache multiple times -- which is not an issue.
+      (or (svref table bits)
+          (setf (svref table bits)
+                (make-alien-integer-type :bits bits :signed signed)))
+      (make-alien-integer-type :bits bits :signed signed)))
+
 (define-alien-type-translator signed (&optional (bits sb!vm:n-word-bits))
-  (make-alien-integer-type :bits bits))
+  (ensure-alien-integer-type **alien-signed-integer-types** bits t))
 
 (define-alien-type-translator integer (&optional (bits sb!vm:n-word-bits))
-  (make-alien-integer-type :bits bits))
+  (ensure-alien-integer-type **alien-signed-integer-types** bits t))
 
 (define-alien-type-translator unsigned (&optional (bits sb!vm:n-word-bits))
-  (make-alien-integer-type :bits bits :signed nil))
+  (ensure-alien-integer-type **alien-unsigned-integer-types** bits nil))
 
 (define-alien-type-method (integer :unparse) (type)
   (list (if (alien-integer-type-signed type) 'signed 'unsigned)
@@ -641,10 +692,17 @@
 
 (define-alien-type-class (boolean :include integer :include-args (signed)))
 
+(defglobal **alien-boolean-types** (make-array +alien-integer-type-cache-size+
+                                               :initial-element nil))
+
 ;;; FIXME: Check to make sure that we aren't attaching user-readable
 ;;; stuff to CL:BOOLEAN in any way which impairs ANSI compliance.
 (define-alien-type-translator boolean (&optional (bits sb!vm:n-word-bits))
-  (make-alien-boolean-type :bits bits :signed nil))
+  (if (< bits +alien-integer-type-cache-size+)
+      (or (svref **alien-boolean-types** bits)
+          (setf (svref **alien-boolean-types** bits)
+                (make-alien-boolean-type :bits bits :signed nil)))
+      (make-alien-boolean-type :bits bits :signed nil)))
 
 (define-alien-type-method (boolean :unparse) (type)
   `(boolean ,(alien-boolean-type-bits type)))
@@ -820,8 +878,12 @@
 (define-alien-type-class (single-float :include (float (bits 32))
                                        :include-args (type)))
 
+(defglobal **alien-single-float-type** nil)
+
 (define-alien-type-translator single-float ()
-  (make-alien-single-float-type :type 'single-float))
+  (or **alien-single-float-type**
+      (setf **alien-single-float-type**
+            (make-alien-single-float-type :type 'single-float))))
 
 (define-alien-type-method (single-float :extract-gen) (type sap offset)
   (declare (ignore type))
@@ -830,8 +892,12 @@
 (define-alien-type-class (double-float :include (float (bits 64))
                                        :include-args (type)))
 
+(defglobal **alien-double-float-type** nil)
+
 (define-alien-type-translator double-float ()
-  (make-alien-double-float-type :type 'double-float))
+  (or **alien-double-float-type**
+      (setf **alien-double-float-type**
+            (make-alien-double-float-type :type 'double-float))))
 
 (define-alien-type-method (double-float :extract-gen) (type sap offset)
   (declare (ignore type))
@@ -846,8 +912,17 @@
                                                          #!+alpha 64)))
   (to nil :type (or alien-type null)))
 
+(defglobal **alien-pointer-t-type** nil)
+
 (define-alien-type-translator * (to &environment env)
-  (make-alien-pointer-type :to (if (eq to t) nil (parse-alien-type to env))))
+  (if (eq to t)
+      (or **alien-pointer-t-type**
+          (setf **alien-pointer-t-type**
+                (make-alien-pointer-type :to nil)))
+      (let ((type (parse-alien-type to env)))
+        (or (alien-type-pointer-type type)
+            (setf (alien-type-pointer-type type)
+                  (make-alien-pointer-type :to type))))))
 
 (define-alien-type-method (pointer :unparse) (type)
   (let ((to (alien-pointer-type-to type)))
@@ -914,7 +989,9 @@
 
 ;;;; the ARRAY type
 
-(define-alien-type-class (array :include mem-block)
+(define-alien-type-class (array :include mem-block
+                                :include-args (naturalize deport deport-alloc
+                                                          extract deposit))
   (element-type (missing-arg) :type alien-type)
   (dimensions (missing-arg) :type list))
 
@@ -929,16 +1006,39 @@
       (when loser
         (error "A dimension is not a non-negative fixnum: ~S" loser))))
 
-  (let ((parsed-ele-type (parse-alien-type ele-type env)))
+  (let* ((parsed-ele-type (parse-alien-type ele-type env))
+         (alignment (alien-type-alignment parsed-ele-type))
+         (bits (if (and (alien-type-bits parsed-ele-type)
+                        (every #'integerp dims))
+                   (* (align-offset (alien-type-bits parsed-ele-type)
+                                    (alien-type-alignment parsed-ele-type))
+                      (reduce #'* dims)))))
+    ;; Instead of interning array types we build them with all the
+    ;; functions in place.
     (make-alien-array-type
      :element-type parsed-ele-type
      :dimensions dims
-     :alignment (alien-type-alignment parsed-ele-type)
-     :bits (if (and (alien-type-bits parsed-ele-type)
-                    (every #'integerp dims))
-               (* (align-offset (alien-type-bits parsed-ele-type)
-                                (alien-type-alignment parsed-ele-type))
-                  (reduce #'* dims))))))
+     :alignment alignment
+     :bits bits
+     :naturalize #'%sap-alien
+     :deport #'alien-sap
+     :deport-alloc (lambda (value type)
+                     (declare (ignore type))
+                     value)
+     :extract (lambda (sap offset type)
+                (declare (type system-area-pointer sap)
+                         (type fixnum offset))
+                (%sap-alien (sap+ sap (truncate offset sb!vm:n-byte-bits))
+                            type))
+     :deposit (lambda (sap offset type value)
+                (declare (type system-area-pointer sap)
+                         (type fixnum offset))
+                (let ((source (alien-value-sap value)))
+                  (sb!kernel:system-area-ub8-copy
+                   source 0 sap
+                   (truncate offset sb!vm:n-byte-bits)
+                   (truncate (alien-mem-block-type-bits type) sb!vm:n-byte-bits)))
+                value))))
 
 (define-alien-type-method (array :unparse) (type)
   `(array ,(%unparse-alien-type (alien-array-type-element-type type))
@@ -1000,7 +1100,13 @@
   (flet ((frob-type (type new-fields alignment bits)
            (setf (alien-record-type-fields type) new-fields
                  (alien-record-type-alignment type) alignment
-                 (alien-record-type-bits type) bits)))
+                 (alien-record-type-bits type) bits
+                 ;; Throw away old functions.
+                 (alien-type-naturalize type) nil
+                 (alien-type-deport type) nil
+                 (alien-type-deport-alloc type) nil
+                 (alien-type-extract type) nil
+                 (alien-type-deposit type) nil)))
       (cond (fields
              (multiple-value-bind (new-fields alignment bits)
                  (parse-alien-record-fields kind fields env)

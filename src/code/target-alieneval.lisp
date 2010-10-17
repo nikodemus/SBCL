@@ -213,17 +213,6 @@
     (if (eq (compute-alien-rep-type alien-type) 'system-area-pointer)
         `(%sap-alien ,sap ',alien-type)
         (error "cannot make an alien of type ~S out of a SAP" type))))
-
-(defun %sap-alien (sap type)
-  (declare (type system-area-pointer sap)
-           (type alien-type type))
-  (make-alien-value :sap sap :type type))
-
-(defun alien-sap (alien)
-  #!+sb-doc
-  "Return a System-Area-Pointer pointing to Alien's data."
-  (declare (type alien-value alien))
-  (alien-value-sap alien))
 
 ;;;; allocation/deallocation of heap aliens
 
@@ -558,34 +547,50 @@ allocated using ``malloc'', so it can be passed to foreign functions which use
         (*evaluator-mode* :interpret))
     (coerce lambda-form 'function)))
 
+(defmacro call-using-alien-type-cache (what type &rest args)
+  (let ((accessor (symbolicate "ALIEN-TYPE-" what)))
+    (once-only ((n-type type))
+      (with-unique-names (fun)
+        `(let ((,fun (,accessor ,n-type)))
+           (cond ((compiled-function-p ,fun)
+                  ;; 3-Nth time around: just call the precomputed function.
+                  (funcall ,fun ,@args))
+                 ((not ,fun)
+                  ;; First time around: compute and call an interpreted function.
+                  (funcall (setf (,accessor ,n-type)
+                                 (coerce-to-interpreted-function
+                                  (,(symbolicate "COMPUTE-" what "-LAMBDA") ,n-type)))
+                           ,@args))
+                 (t
+                  ;; Second time around: compile and call the function. Doing this
+                  ;; the second time instead of the first makes sure we don't waste
+                  ;; time compiling lambdas for types that aren't interned.
+                  (funcall (setf (,accessor ,n-type) (compile nil ,fun))
+                           ,@args))))))))
+
 (defun naturalize (alien type)
   (declare (type alien-type type))
-  (funcall (coerce-to-interpreted-function (compute-naturalize-lambda type))
-           alien type))
+  (call-using-alien-type-cache naturalize type alien type))
 
 (defun deport (value type)
   (declare (type alien-type type))
-  (funcall (coerce-to-interpreted-function (compute-deport-lambda type))
-           value type))
+  (call-using-alien-type-cache deport type value type))
 
 (defun deport-alloc (value type)
   (declare (type alien-type type))
-  (funcall (coerce-to-interpreted-function (compute-deport-alloc-lambda type))
-           value type))
+  (call-using-alien-type-cache deport-alloc type value type))
 
 (defun extract-alien-value (sap offset type)
   (declare (type system-area-pointer sap)
            (type unsigned-byte offset)
            (type alien-type type))
-  (funcall (coerce-to-interpreted-function (compute-extract-lambda type))
-           sap offset type))
+  (call-using-alien-type-cache extract type sap offset type))
 
 (defun deposit-alien-value (sap offset type value)
   (declare (type system-area-pointer sap)
            (type unsigned-byte offset)
            (type alien-type type))
-  (funcall (coerce-to-interpreted-function (compute-deposit-lambda type))
-           sap offset type value))
+  (call-using-alien-type-cache deposit type sap offset type value))
 
 ;;;; ALIEN-FUNCALL, DEFINE-ALIEN-ROUTINE
 
