@@ -61,20 +61,16 @@ int set_noecho(int fd)
 #if defined(LISP_FEATURE_OPENBSD)
 
 int
-set_pty(char *pty_name)
+set_pty(int pty)
 {
-    int fd;
-
-    if ((fd = open(pty_name, O_RDWR, 0)) == -1 ||
-        login_tty(fd) == -1)
-        return (0);
-    return (set_noecho(STDIN_FILENO));
+    login_tty(pty);
+    return 0;
 }
 
 #else /* !LISP_FEATURE_OPENBSD */
 
 int
-set_pty(char *pty_name)
+set_pty(int pty)
 {
     int fd;
 
@@ -84,22 +80,18 @@ set_pty(char *pty_name)
         ioctl(fd, TIOCNOTTY, 0);
         close(fd);
     }
+    ioctl(pty, TIOCSCTTY, 0);
 #endif
-    if ((fd = open(pty_name, O_RDWR, 0)) == -1)
-        return (-1);
-    dup2(fd, 0);
-    set_noecho(0);
-    dup2(fd, 1);
-    dup2(fd, 2);
-    close(fd);
-    return (0);
-}
 
+    tcsetpgrp(pty, getpgrp());
+
+    return 0;
+}
 #endif /* !LISP_FEATURE_OPENBSD */
 
 extern char **environ;
 int spawn(char *program, char *argv[], int sin, int sout, int serr,
-          int search, char *envp[], char *pty_name, int wait)
+          int search, char *envp[], int pty_fd, int wait)
 {
     int pid = fork();
     int fd;
@@ -111,16 +103,8 @@ int spawn(char *program, char *argv[], int sin, int sout, int serr,
     /* Put us in our own process group, but only if we need not
      * share stdin with our parent. In the latter case we claim
      * control of the terminal. */
-    if (sin >= 0) {
-#if defined(LISP_FEATURE_HPUX) || defined(LISP_FEATURE_OPENBSD)
+    if ((sin >= 0) || (pty_fd >= 0)) {
       setsid();
-#elif defined(LISP_FEATURE_DARWIN)
-      setpgid(0, getpid());
-#elif defined(SVR4) || defined(__linux__) || defined(__osf__)
-      setpgrp();
-#else
-      setpgrp(0, getpid());
-#endif
     } else {
       tcsetpgrp(0, getpgrp());
     }
@@ -130,9 +114,9 @@ int spawn(char *program, char *argv[], int sin, int sout, int serr,
     sigprocmask(SIG_SETMASK, &sset, NULL);
 
     /* If we are supposed to be part of some other pty, go for it. */
-    if (pty_name)
-        set_pty(pty_name);
-    else {
+    if (pty_fd >= 0)
+        set_pty(pty_fd);
+
     /* Set up stdin, stdout, and stderr */
     if (sin >= 0)
         dup2(sin, 0);
@@ -140,14 +124,17 @@ int spawn(char *program, char *argv[], int sin, int sout, int serr,
         dup2(sout, 1);
     if (serr >= 0)
         dup2(serr, 2);
-    }
+
+    if ((pty_fd >= 0) && (pty_fd==sin))
+        set_noecho(0);
+
     /* Close all other fds. */
 #ifdef SVR4
     for (fd = sysconf(_SC_OPEN_MAX)-1; fd >= 3; fd--)
-        close(fd);
+      close(fd);
 #else
     for (fd = getdtablesize()-1; fd >= 3; fd--)
-        close(fd);
+      close(fd);
 #endif
 
     environ = envp;

@@ -265,3 +265,93 @@
         (process-close proc)
         (assert (not stopped))))))
 
+#-win32
+(with-test (:name (:run-program :pty 1))
+  ;; Reading and writing on the pty
+  (let* ((proc (run-program "../src/runtime/sbcl"
+                            '("--core" "../output/sbcl.core"
+                              "--noinform"
+                              "--no-userinit"
+                              "--eval"
+                              "(write-line \"OK\")")
+                            :pty t
+                            :wait nil))
+         (pty (process-pty proc)))
+    (assert (string= (concatenate 'string "OK" (string #\return)) (read-line pty)))
+    (write-line "(sb-ext:quit :unix-status 42)" pty)
+    (finish-output pty)
+    (process-wait proc)
+    (process-close proc)
+    (assert (eq :exited (process-status proc)))
+    (assert (eql 42 (process-exit-code proc)))))
+
+#-win32
+(with-test (:name (:run-program :pty 2))
+  ;; Child opening /dev/tty and writing on it
+  (let* ((proc (run-program "../src/runtime/sbcl"
+                            '("--core" "../output/sbcl.core"
+                              "--noinform"
+                              "--no-userinit"
+                              "--eval"
+                              "(let ((tty (open \"/dev/tty\" :direction :io :if-exists :overwrite)))
+                                 (format tty \"got=~A~%\" (read-line tty))
+                                 (finish-output tty))")
+                            :pty t
+                            :wait nil))
+         (pty (process-pty proc)))
+    (write-line "from-parent" pty)
+    (finish-output pty)
+    (assert (string= "got=from-parent" (string-trim '(#\return) (read-line pty))))
+    (write-line "(sb-ext:quit :unix-status 42)" pty)
+    (finish-output pty)
+    (process-wait proc)
+    (process-close proc)
+    (assert (eq :exited (process-status proc)))
+    (assert (eql 42 (process-exit-code proc)))))
+
+#-win32
+(with-test (:name (:run-program :pty 3))
+  ;; can use :pty with non-pty streams with :pty
+  (let* ((err (make-string-output-stream))
+         (proc (run-program "/home/nikodemus/src/sbcl-git/src/runtime/sbcl"
+                            '("--core" "/home/nikodemus/src/sbcl-git/output/sbcl.core"
+                              "--noinform"
+                              "--no-userinit"
+                              "--eval"
+                              "(progn (write-string \"BOO!\" *error-output*)
+                                      (finish-output *error-output*))")
+                            :error err
+                            :pty t
+                            :wait nil))
+         (pty (process-pty proc)))
+    (write-line "(sb-ext:quit :unix-status 42)" pty)
+    (finish-output pty)
+    (process-wait proc)
+    (assert (string= "BOO!" (get-output-stream-string err)))
+    (process-close proc)
+    (assert (eq :exited (process-status proc)))
+    (assert (eql 42 (process-exit-code proc)))))
+
+#-win32
+(with-test (:name (:run-program :pty 4))
+  ;; Make sure :PTY causes isatty to be true.
+  (let* ((proc (run-program "../src/runtime/sbcl"
+                            '("--core" "../output/sbcl.core"
+                              "--noinform"
+                              "--no-userinit"
+                              "--eval"
+                              "(progn
+                                 (prin1 (list (sb-unix:unix-isatty 0)
+                                              (sb-unix:unix-isatty 1)
+                                              (sb-unix:unix-isatty 2)))
+                                 (finish-output))")
+                            :pty t
+                            :wait nil))
+         (pty (process-pty proc)))
+    (assert (equal '(1 1 1) (read pty)))
+    (write-line "(sb-ext:quit :unix-status 42)" pty)
+    (finish-output pty)
+    (process-wait proc)
+    (process-close proc)
+    (assert (eq :exited (process-status proc)))
+    (assert (eql 42 (process-exit-code proc)))))

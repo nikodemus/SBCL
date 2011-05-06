@@ -453,8 +453,9 @@ status slot."
             (error "couldn't SB-UNIX:UNIX-DUP ~W: ~A" master (strerror errno)))
           (push new-fd *close-on-error*)
           (copy-descriptor-to-stream new-fd pty cookie external-format)))
-      (values name
+      (values slave
               (sb-sys:make-fd-stream master :input t :output t
+                                     :external-format external-format
                                      :element-type :default
                                      :dual-channel-p t)))))
 
@@ -515,7 +516,7 @@ status slot."
   (stderr sb-alien:int)
   (search sb-alien:int)
   (envp (* sb-alien:c-string))
-  (pty-name sb-alien:c-string)
+  (pty-fd sb-alien:int)
   (wait sb-alien:int))
 
 ;;; FIXME: There shouldn't be two semiredundant versions of the
@@ -572,11 +573,11 @@ status slot."
                     (wait t)
                     search
                     #-win32 pty
-                    input
+                    (input nil inputp)
                     if-input-does-not-exist
-                    output
+                    (output nil outputp)
                     (if-output-exists :error)
-                    (error :output)
+                    (error :output errorp)
                     (if-error-exists :error)
                     status-hook
                     (external-format :default))
@@ -609,193 +610,221 @@ Users Manual for details about the PROCESS structure."#-win32"
      documentation about this and other security issues in script-like
      programs.)""
 
-   The &KEY arguments have the following meanings:
+The &KEY arguments have the following meanings:
 "#-win32"
    :ENVIRONMENT
       a list of STRINGs describing the new Unix environment
       (as in \"man environ\"). The default is to copy the environment of
       the current process.
+
    :ENV
       an alternative lossy representation of the new Unix environment,
       for compatibility with CMU CL""
+
    :SEARCH
       Look for PROGRAM in each of the directories in the child's $PATH
       environment variable.  Otherwise an absolute pathname is required.
+
    :WAIT
       If non-NIL (default), wait until the created process finishes.  If
       NIL, continue running Lisp until the program finishes."#-win32"
+
    :PTY
-      Either T, NIL, or a stream.  Unless NIL, the subprocess is established
-      under a PTY.  If :pty is a stream, all output to this pty is sent to
-      this stream, otherwise the PROCESS-PTY slot is filled in with a stream
-      connected to pty that can read output and write input.""
-   :INPUT
-      Either T, NIL, a pathname, a stream, or :STREAM.  If T, the standard
-      input for the current process is inherited.  If NIL, "
-      #-win32"/dev/null"#+win32"nul""
-      is used.  If a pathname, the file so specified is used.  If a stream,
-      all the input is read from that stream and sent to the subprocess.  If
-      :STREAM, the PROCESS-INPUT slot is filled in with a stream that sends
-      its output to the process. Defaults to NIL.
+      Either T, NIL, or a stream. Unless NIL, the subprocess is established
+      under a PTY. If :PTY is a stream, all output to this pty is sent to this
+      stream, otherwise the PROCESS-PTY slot is filled in with a stream
+      connected to pty that can read output and write input. Causes :INPUT and
+      :OUTPUT to default to :PTY.""
+
+   :INPUT, :OUTPUT, and :ERROR
+      Correspond to the value of PROCESS-INPUT, PROCESS-OUTPUT, and
+      PROCESS-ERROR slots for the process object.
+
+      Valid values are NIL, T, a pathname, a stream,"#-win32", :PTY"", or :STREAM.
+      Additionally for :ERROR, :OUTPUT is also a valid value.
+
+      Default for :INPUT and :OUTPUT is NIL"#-win32", unless :PTY is true, in
+      which case :INPUT and :OUTPUT default to :PTY instead"".
+
+      Default for :ERROR is :OUTPUT, which means to use the PROCESS-OUTPUT for
+      error output as well.
+
+      If NIL, "#-win32"/dev/null"#+win32"nul"" is used.
+
+      If T, the standard input/output/error for the current process is
+      inherited.
+
+      If a pathname, the file so specified is used.
+
+      If a stream, that stream or its underlying OS resource is used."#-win32"
+
+      If :PTY, then :PTY must be true, and the PROCESS-PTY is used.""
+
+      If :STREAM, a new stream is created that is connected to the process.
+
    :IF-INPUT-DOES-NOT-EXIST (when :INPUT is the name of a file)
       can be one of:
          :ERROR to generate an error
          :CREATE to create an empty file
          NIL (the default) to return NIL from RUN-PROGRAM
-   :OUTPUT
-      Either T, NIL, a pathname, a stream, or :STREAM.  If T, the standard
-      output for the current process is inherited.  If NIL, "
-      #-win32"/dev/null"#+win32"nul""
-      is used.  If a pathname, the file so specified is used.  If a stream,
-      all the output from the process is written to this stream. If
-      :STREAM, the PROCESS-OUTPUT slot is filled in with a stream that can
-      be read to get the output. Defaults to NIL.
+
    :IF-OUTPUT-EXISTS (when :OUTPUT is the name of a file)
       can be one of:
          :ERROR (the default) to generate an error
          :SUPERSEDE to supersede the file with output from the program
          :APPEND to append output from the program to the file
          NIL to return NIL from RUN-PROGRAM, without doing anything
-   :ERROR and :IF-ERROR-EXISTS
+
+   IF-ERROR-EXISTS
       Same as :OUTPUT and :IF-OUTPUT-EXISTS, except that :ERROR can also be
       specified as :OUTPUT in which case all error output is routed to the
       same place as normal output.
+
    :STATUS-HOOK
       This is a function the system calls whenever the status of the
       process changes.  The function takes the process as an argument.
+
    :EXTERNAL-FORMAT
       The external-format to use for :INPUT, :OUTPUT, and :ERROR :STREAMs.")
   #-win32
   (when (and env-p environment-p)
     (error "can't specify :ENV and :ENVIRONMENT simultaneously"))
-  ;; Prepend the program to the argument list.
-  (push (namestring program) args)
-  (labels (;; It's friendly to allow the caller to pass any string
-           ;; designator, but internally we'd like SIMPLE-STRINGs.
-           ;;
-           ;; Huh?  We let users pass in symbols and characters for
-           ;; the arguments, but call NAMESTRING on the program
-           ;; name... -- RMK
-           (simplify-args (args)
-             (loop for arg in args
-                   as escaped-arg = (escape-arg arg)
-                   collect (coerce escaped-arg 'simple-string)))
-           (escape-arg (arg)
-             #-win32 arg
-             ;; Apparently any spaces or double quotes in the arguments
-             ;; need to be escaped on win32.
-             #+win32 (if (position-if
-                          (lambda (c) (find c '(#\" #\Space))) arg)
-                         (write-to-string arg)
-                         arg)))
-    (let (;; Clear various specials used by GET-DESCRIPTOR-FOR to
-          ;; communicate cleanup info.
-          *close-on-error*
-          *close-in-parent*
-          ;; Some other binding used only on non-Win32.  FIXME:
-          ;; nothing seems to set this.
-          #-win32 *handlers-installed*
-          ;; Establish PROC at this level so that we can return it.
-          proc
-          (simple-args (simplify-args args))
-          (progname (native-namestring program))
-          ;; Gag.
-          (cookie (list 0)))
-      (unwind-protect
-           ;; Note: despite the WITH-* names, these macros don't
-           ;; expand into UNWIND-PROTECT forms.  They're just
-           ;; syntactic sugar to make the rest of the routine slightly
-           ;; easier to read.
-           (macrolet ((with-fd-and-stream-for (((fd stream) which &rest args)
-                                               &body body)
-                        `(multiple-value-bind (,fd ,stream)
-                             ,(ecase which
-                                ((:input :output)
-                                 `(get-descriptor-for ,@args))
-                                (:error
-                                 `(if (eq ,(first args) :output)
-                                      ;; kludge: we expand into
-                                      ;; hard-coded symbols here.
-                                      (values stdout output-stream)
-                                      (get-descriptor-for ,@args))))
-                           ,@body))
-                      (with-open-pty (((pty-name pty-stream) (pty cookie))
-                                      &body body)
-                        #+win32 `(declare (ignore ,pty ,cookie))
-                        #+win32 `(let (,pty-name ,pty-stream) ,@body)
-                        #-win32 `(multiple-value-bind (,pty-name ,pty-stream)
-                                     (open-pty ,pty ,cookie)
-                                   ,@body))
-                      (with-args-vec ((vec args) &body body)
-                        `(with-c-strvec (,vec ,args)
-                           ,@body))
-                      (with-environment-vec ((vec env) &body body)
-                        #+win32 `(let (,vec) ,@body)
-                        #-win32 `(with-c-strvec (,vec ,env) ,@body)))
-             (with-fd-and-stream-for ((stdin input-stream) :input
-                                      input cookie
-                                      :direction :input
-                                      :if-does-not-exist if-input-does-not-exist
-                                      :external-format external-format
-                                      :wait wait)
-               (with-fd-and-stream-for ((stdout output-stream) :output
-                                        output cookie
-                                        :direction :output
-                                        :if-exists if-output-exists
-                                        :external-format external-format)
-                 (with-fd-and-stream-for ((stderr error-stream)  :error
-                                          error cookie
-                                          :direction :output
-                                          :if-exists if-error-exists
-                                          :external-format external-format)
-                   (with-open-pty ((pty-name pty-stream) (pty cookie))
-                     ;; Make sure we are not notified about the child
-                     ;; death before we have installed the PROCESS
-                     ;; structure in *ACTIVE-PROCESSES*.
-                     (let (child)
-                       (with-active-processes-lock ()
-                         (with-args-vec (args-vec simple-args)
-                           (with-environment-vec (environment-vec environment)
-                             (setq child (without-gcing
-                                           (spawn progname args-vec
-                                                  stdin stdout stderr
-                                                  (if search 1 0)
-                                                  environment-vec pty-name
-                                                  (if wait 1 0))))
-                             (unless (= child -1)
-                               (setf proc
-                                     (apply
-                                      #'make-process
-                                      :pid child
-                                      :input input-stream
-                                      :output output-stream
-                                      :error error-stream
-                                      :status-hook status-hook
-                                      :cookie cookie
-                                      #-win32 (list :pty pty-stream
-                                                    :%status :running)
-                                      #+win32 (if wait
-                                                  (list :%status :exited
-                                                        :exit-code child)
-                                                  (list :%status :running))))
-                               (push proc *active-processes*)))))
-                       ;; Report the error outside the lock.
-                       (when (= child -1)
-                         (error "couldn't fork child process: ~A"
-                                (strerror)))))))))
-        (dolist (fd *close-in-parent*)
-          (sb-unix:unix-close fd))
-        (unless proc
-          (dolist (fd *close-on-error*)
+  (when pty
+    (unless inputp
+      (setf input :pty))
+    (unless outputp
+      (setf output :pty)))
+  (let ((progname (native-namestring program)))
+    ;; Prepend the program to the argument list.
+    (push progname args)
+    (labels ( ;; It's friendly to allow the caller to pass any string
+             ;; designator, but internally we'd like SIMPLE-STRINGs.
+             ;;
+             ;; Huh?  We let users pass in symbols and characters for
+             ;; the arguments, but call NAMESTRING on the program
+             ;; name... -- RMK
+             (simplify-args (args)
+               (loop for arg in args
+                     as escaped-arg = (escape-arg arg)
+                     collect (coerce escaped-arg 'simple-string)))
+             (escape-arg (arg)
+               #-win32 arg
+               ;; Apparently any spaces or double quotes in the arguments
+               ;; need to be escaped on win32.
+               #+win32 (if (position-if
+                            (lambda (c) (find c '(#\" #\Space))) arg)
+                           (write-to-string arg)
+                           arg)))
+      (let ( ;; Clear various specials used by GET-DESCRIPTOR-FOR to
+            ;; communicate cleanup info.
+            *close-on-error*
+            *close-in-parent*
+            ;; Some other binding used only on non-Win32.  FIXME:
+            ;; nothing seems to set this.
+            #-win32 *handlers-installed*
+            ;; Establish PROC at this level so that we can return it.
+            proc
+            (simple-args (simplify-args args))
+            ;; Gag.
+            (cookie (list 0)))
+        (unwind-protect
+             ;; Note: despite the WITH-* names, these macros don't
+             ;; expand into UNWIND-PROTECT forms.  They're just
+             ;; syntactic sugar to make the rest of the routine slightly
+             ;; easier to read.
+             (macrolet ((with-fd-and-stream-for (((arg fd stream) &body args)
+                                                 &body body)
+                          ;; KLUDGE: we expand into
+                          ;; hard-coded symbols here.
+                          `(multiple-value-bind (,fd ,stream)
+                               ,(ecase arg
+                                       ((input output)
+                                        `(if (eq ,arg :pty)
+                                             (values pty-fd pty-stream)
+                                             (get-descriptor-for ,arg ,@args)))
+                                       ((error)
+                                        `(if (eq ,arg :output)
+                                             (values stdout output-stream)
+                                             (get-descriptor-for ,arg ,@args))))
+                             ,@body))
+                        (with-open-pty (((slave-fd master-stream) (pty cookie))
+                                        &body body)
+                          #+win32 `(declare (ignore ,pty ,cookie))
+                          #+win32 `(let (,pty-name ,pty-stream) ,@body)
+                          #-win32 `(multiple-value-bind (,slave-fd ,master-stream)
+                                       (open-pty ,pty ,cookie :external-format external-format)
+                                     ,@body))
+                        (with-args-vec ((vec args) &body body)
+                          `(with-c-strvec (,vec ,args)
+                             ,@body))
+                        (with-environment-vec ((vec env) &body body)
+                          #+win32 `(let (,vec) ,@body)
+                          #-win32 `(with-c-strvec (,vec ,env) ,@body)))
+               (with-open-pty ((pty-fd pty-stream) (pty cookie))
+                 (with-fd-and-stream-for ((input stdin input-stream)
+                                          cookie
+                                          :direction :input
+                                          :if-does-not-exist if-input-does-not-exist
+                                          :external-format external-format
+                                          :wait wait)
+                   (with-fd-and-stream-for ((output stdout output-stream)
+                                            cookie
+                                            :direction :output
+                                            :if-exists if-output-exists
+                                            :external-format external-format)
+                     (with-fd-and-stream-for ((error stderr error-stream)
+                                              cookie
+                                              :direction :output
+                                              :if-exists if-error-exists
+                                              :external-format external-format)
+                       ;; Make sure we are not notified about the child
+                       ;; death before we have installed the PROCESS
+                       ;; structure in *ACTIVE-PROCESSES*.
+                       (let (child)
+                         (with-active-processes-lock ()
+                           (with-args-vec (args-vec simple-args)
+                             (with-environment-vec (environment-vec environment)
+                               (setq child (without-gcing
+                                             (spawn progname args-vec
+                                                    stdin stdout stderr
+                                                    (if search 1 0)
+                                                    environment-vec (or pty-fd -1)
+                                                    (if wait 1 0))))
+                               (unless (= child -1)
+                                 (setf proc
+                                       (apply
+                                        #'make-process
+                                        :pid child
+                                        :input input-stream
+                                        :output output-stream
+                                        :error error-stream
+                                        :status-hook status-hook
+                                        :cookie cookie
+                                        #-win32 (list :pty pty-stream
+                                                      :%status :running)
+                                        #+win32 (if wait
+                                                    (list :%status :exited
+                                                          :exit-code child)
+                                                    (list :%status :running))))
+                                 (push proc *active-processes*)))))
+                         ;; Report the error outside the lock.
+                         (when (= child -1)
+                           (error "couldn't fork child process: ~A"
+                                  (strerror)))))))))
+          ;; Cleanups
+          (dolist (fd *close-in-parent*)
             (sb-unix:unix-close fd))
-          ;; FIXME: nothing seems to set this.
-          #-win32
-          (dolist (handler *handlers-installed*)
-            (sb-sys:remove-fd-handler handler))))
-      #-win32
-      (when (and wait proc)
-        (process-wait proc))
-      proc)))
+          (unless proc
+            (dolist (fd *close-on-error*)
+              (sb-unix:unix-close fd))
+            ;; FIXME: nothing seems to set this.
+            #-win32
+            (dolist (handler *handlers-installed*)
+              (sb-sys:remove-fd-handler handler))))
+        #-win32
+        (when (and wait proc)
+          (process-wait proc))
+        proc))))
 
 ;;; Install a handler for any input that shows up on the file
 ;;; descriptor. The handler reads the data and writes it to the
