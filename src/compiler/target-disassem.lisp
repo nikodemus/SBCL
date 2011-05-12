@@ -948,7 +948,8 @@
 ;;; somehow.
 (defun get-toplevel-form (debug-source tlf-index)
   (cond
-    ((sb!di:debug-source-namestring debug-source)
+    ((and (sb!di:debug-source-namestring debug-source)
+          (not (sb!di:debug-source-form debug-source)))
      (let ((namestring (sb!di:debug-source-namestring debug-source)))
        (cond ((not (probe-file namestring))
               (warn "The source file ~S no longer seems to exist." namestring)
@@ -986,7 +987,10 @@
                                   (format nil "#.~S" token))))
                              (read f)))))))))))
     ((sb!di:debug-source-form debug-source)
-     (sb!di:debug-source-form debug-source))
+     (let ((form (sb!di:debug-source-form debug-source)))
+       (if (vectorp form)
+           (aref form tlf-index)
+           form)))
     (t (bug "Don't know how to use a DEBUG-SOURCE without ~
              a namestring or a form."))))
 

@@ -262,7 +262,7 @@
 
   ;; For functions processed by EVAL (including EVAL-WHEN and LOAD on
   ;; a source file), the source form.
-  (form nil :type list)
+  (form nil :type (or list vector))
   ;; This is the function whose source is the form.
   (function nil)
 
