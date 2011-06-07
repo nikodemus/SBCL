@@ -584,7 +584,7 @@
               (let* ((,n-index (,hash-function ,@(arg-vars)))
                      (,n-cache (or ,var-name (miss)))
                      (,args-and-values (svref ,n-cache ,n-index)))
-                (cond ((and ,args-and-values
+                (cond ((and (not (eql 0 ,args-and-values))
                             ,@(tests))
                        (values ,@(values-refs)))
                       (t
@@ -596,7 +596,7 @@
          `(defun ,fun-name (,@(arg-vars) ,@(values-names))
             (let ((,n-index (,hash-function ,@(arg-vars)))
                   (,n-cache (or ,var-name
-                                (setq ,var-name (make-array ,size :initial-element nil))))
+                                (setq ,var-name (make-array ,size :initial-element 0))))
                   (,args-and-values (make-array ,args-and-values-size)))
               ,@(sets)
               (setf (svref ,n-cache ,n-index) ,args-and-values))
