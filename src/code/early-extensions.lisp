@@ -520,6 +520,12 @@
 ;;;   the specified name. (:INIT-WRAPPER is set to COLD-INIT-FORMS
 ;;;   in type system definitions so that caches will be created
 ;;;   before top level forms run.)
+(defvar *cache-vector-symbols* nil)
+
+(defun drop-all-hash-caches ()
+  (dolist (name *cache-vector-symbols*)
+    (set name nil)))
+
 (defmacro define-hash-cache (name args &key hash-function hash-bits default
                                   (init-wrapper 'progn)
                                   (values 1))
@@ -612,6 +618,7 @@
       #!+sb-show (inits `(setq *hash-caches-initialized-p* t))
 
       `(progn
+         (pushnew ',var-name *cache-vector-symbols*)
          (defvar ,var-name)
          ,@(when *profile-hash-cache*
              `((defvar ,probes-name)
