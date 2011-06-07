@@ -577,23 +577,26 @@
          `(defun ,fun-name ,(arg-vars)
             ,@(when *profile-hash-cache*
                 `((incf ,probes-name)))
-            (let* ((,n-index (,hash-function ,@(arg-vars)))
-                   (,n-cache ,var-name)
-                   (,args-and-values (svref ,n-cache ,n-index)))
-              (cond ((and ,args-and-values
-                          ,@(tests))
-                     (values ,@(values-refs)))
-                    (t
+            (flet ((miss ()
                      ,@(when *profile-hash-cache*
                          `((incf ,misses-name)))
-                     ,default))))))
+                     (return-from ,fun-name ,default)))
+              (let* ((,n-index (,hash-function ,@(arg-vars)))
+                     (,n-cache (or ,var-name (miss)))
+                     (,args-and-values (svref ,n-cache ,n-index)))
+                (cond ((and ,args-and-values
+                            ,@(tests))
+                       (values ,@(values-refs)))
+                      (t
+                       (miss))))))))
 
       (let ((fun-name (symbolicate name "-CACHE-ENTER")))
         (inlines fun-name)
         (forms
          `(defun ,fun-name (,@(arg-vars) ,@(values-names))
             (let ((,n-index (,hash-function ,@(arg-vars)))
-                  (,n-cache ,var-name)
+                  (,n-cache (or ,var-name
+                                (setq ,var-name (make-array ,size :initial-element nil))))
                   (,args-and-values (make-array ,args-and-values-size)))
               ,@(sets)
               (setf (svref ,n-cache ,n-index) ,args-and-values))
@@ -602,11 +605,10 @@
       (let ((fun-name (symbolicate name "-CACHE-CLEAR")))
         (forms
          `(defun ,fun-name ()
-            (fill ,var-name nil)))
-        (forms `(,fun-name)))
+            (setq ,var-name nil))))
 
       (inits `(unless (boundp ',var-name)
-                (setq ,var-name (make-array ,size :initial-element nil))))
+                (setq ,var-name nil)))
       #!+sb-show (inits `(setq *hash-caches-initialized-p* t))
 
       `(progn
@@ -614,7 +616,7 @@
          ,@(when *profile-hash-cache*
              `((defvar ,probes-name)
                (defvar ,misses-name)))
-         (declaim (type (simple-vector ,size) ,var-name))
+         (declaim (type (or null (simple-vector ,size)) ,var-name))
          #!-sb-fluid (declaim (inline ,@(inlines)))
          (,init-wrapper ,@(inits))
          ,@(forms)

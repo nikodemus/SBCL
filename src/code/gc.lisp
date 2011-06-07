@@ -324,8 +324,7 @@ NIL as the pathname."
   ;; Power cache of the bignum printer: drops overly large bignums and
   ;; removes duplicate entries.
   (scrub-power-cache)
-  ;; FIXME: CTYPE-OF-CACHE-CLEAR isn't thread-safe.
-  #!-sb-thread
+  ;; CTYPE-OF cache can hold on to user data.
   (ctype-of-cache-clear))
 
 
