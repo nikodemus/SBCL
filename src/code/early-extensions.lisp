@@ -529,11 +529,11 @@
 (defmacro define-hash-cache (name args &key hash-function hash-bits default
                                   (init-wrapper 'progn)
                                   (values 1))
-  (let* ((var-name (symbolicate "*" name "-CACHE-VECTOR*"))
+  (let* ((var-name (symbolicate "**" name "-CACHE-VECTOR**"))
          (probes-name (when *profile-hash-cache*
-                       (symbolicate "*" name "-CACHE-PROBES*")))
+                       (symbolicate "**" name "-CACHE-PROBES**")))
          (misses-name (when *profile-hash-cache*
-                      (symbolicate "*" name "-CACHE-MISSES*")))
+                      (symbolicate "**" name "-CACHE-MISSES**")))
          (nargs (length args))
          (size (ash 1 hash-bits))
          (default-values (if (and (consp default) (eq (car default) 'values))
@@ -613,16 +613,16 @@
          `(defun ,fun-name ()
             (setq ,var-name nil))))
 
-      (inits `(unless (boundp ',var-name)
-                (setq ,var-name nil)))
+      ;; Needed for cold init!
+      (inits `(setq ,var-name nil))
       #!+sb-show (inits `(setq *hash-caches-initialized-p* t))
 
       `(progn
          (pushnew ',var-name *cache-vector-symbols*)
-         (defvar ,var-name)
+         (defglobal ,var-name nil)
          ,@(when *profile-hash-cache*
-             `((defvar ,probes-name)
-               (defvar ,misses-name)))
+             `((defglobal ,probes-name 0)
+               (defglobal ,misses-name 0)))
          (declaim (type (or null (simple-vector ,size)) ,var-name))
          #!-sb-fluid (declaim (inline ,@(inlines)))
          (,init-wrapper ,@(inits))
