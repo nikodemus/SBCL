@@ -74,6 +74,7 @@
                 sb!vm:instance-pointer-lowtag)))))))
 
 (defmacro compare-and-swap (place old new &environment env)
+  #!+sb-doc
   "Atomically stores NEW in PLACE if OLD matches the current value of PLACE.
 Two values are considered to match if they are EQ. Returns the previous value
 of PLACE: if the returned value is EQ to OLD, the swap was carried out.
