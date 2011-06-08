@@ -152,11 +152,18 @@ potentially stale even before the function returns, as the thread may exit at
 any time."
   (thread-%alive-p thread))
 
-;; A thread is eligible for gc iff it has finished and there are no
-;; more references to it. This list is supposed to keep a reference to
-;; all running threads.
-(defvar *all-threads* ())
+;;; A thread is eligible for gc iff it has finished and there are no
+;;; more references to it. *ALL-THREADS* list is supposed to keep a
+;;; reference to all running threads.
+;;;
+;;; *ALL-THREADS-COUNT* keeps a count of all live threads, and makes
+;;; sure the number is capped at (1- (expt 2 (/ n-word-bits 2))),
+;;; which limit is imposed by the fair spinlocks.
+;;;
+;;; Both are protected by *ALL-THREADS-LOCK*.
 (defvar *all-threads-lock* (make-mutex :name "all threads lock"))
+(defvar *all-threads* ())
+(defvar *all-threads-count* 0)
 
 (defvar *default-alloc-signal* nil)
 
@@ -192,7 +199,8 @@ created and old ones may exit at any time."
     ;; Either *all-threads* is empty or it contains exactly one thread
     ;; in case we are in reinit since saving core with multiple
     ;; threads doesn't work.
-    (setq *all-threads* (list initial-thread))))
+    (setq *all-threads* (list initial-thread)
+          *all-threads-count* 1)))
 
 
 ;;;; Aliens, low level stuff
@@ -1082,6 +1090,7 @@ on this semaphore, then N of them is woken up."
     (setf (thread-%alive-p thread) nil)
     (setf (thread-os-thread thread) nil)
     (setq *all-threads* (delete thread *all-threads*))
+    (decf *all-threads-count*)
     (when *session*
       (%delete-thread-from-session thread *session*)))
   #!+sb-lutex
@@ -1237,7 +1246,8 @@ around and can be retrieved by JOIN-THREAD."
               (setf (thread-os-thread thread) (current-thread-os-thread))
               (with-mutex ((thread-result-lock thread))
                 (with-all-threads-lock
-                  (push thread *all-threads*))
+                  (push thread *all-threads*)
+                  (incf *all-threads-count*))
                 (with-session-lock (*session*)
                   (push thread (session-threads *session*)))
                 (setf (thread-%alive-p thread) t)
