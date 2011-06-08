@@ -73,7 +73,170 @@
                    sb!vm:n-word-bytes)
                 sb!vm:instance-pointer-lowtag)))))))
 
-(defmacro compare-and-swap (place old new &environment env)
+;;;; COMPARE-AND-SWAP
+;;;;
+;;;; SB-EXT:COMPARE-AND-SWAP is the public API for now.
+;;;;
+;;;; Internally our interface has CAS, GET-CAS-EXPANSION,
+;;;; DEFINE-CAS-EXPANDER, and DEFINE-CAS-MACRO.
+
+(defglobal **cas-expanders** (make-hash-table :test #'eq :synchronized t))
+
+(define-function-name-syntax cas (list)
+  (destructuring-bind (cas symbol) list
+    (aver (eq 'cas cas))
+    (values t symbol)))
+
+;;; This is what it all comes down to.
+(defmacro cas (place old new &environment env)
+  (multiple-value-bind (temps place-args old-temp new-temp cas-form)
+      (get-cas-expansion place env)
+    `(let* (,@(mapcar #'list temps place-args)
+            (,old-temp ,old)
+            (,new-temp ,new))
+       ,cas-form)))
+
+(defun get-cas-expansion (place environment)
+  (flet ((invalid-place ()
+           (error "Invalid place to CAS: ~S" place)))
+    (let ((expanded (macroexpand place environment)))
+      (unless (consp expanded)
+        ;; FIXME: Allow (CAS *FOO* <OLD> <NEW>), maybe?
+        (invalid-place))
+      (let ((name (car expanded)))
+        (unless (symbolp name)
+          (invalid-place))
+        (let ((info (gethash name **cas-expanders**)))
+          (cond
+            ;; CAS expander.
+            (info
+             (funcall info place environment))
+
+            ;; Structure accessor
+            ((setf info (info :function :structure-accessor name))
+             (expand-structure-slot-cas info name expanded))
+
+            ;; CAS function
+            (t
+             (with-unique-names (old new)
+               (let ((vars nil)
+                     (vals nil)
+                     (args nil))
+                 (dolist (x (reverse (cdr expanded)))
+                   (cond ((constantp x environment)
+                          (push x args))
+                         (t
+                          (let ((tmp (gensymify x)))
+                            (push tmp args)
+                            (push tmp vars)
+                            (push x vals)))))
+                 (values vars vals old new
+                         `(funcall #'(cas ,name) ,old ,new ,@args)))))))))))
+
+(defun expand-structure-slot-cas (dd name place)
+  (let* ((structure (dd-name dd))
+         (slotd (find name (dd-slots dd) :key #'dsd-accessor-name))
+         (index (dsd-index slotd))
+         (type (dsd-type slotd)))
+    (unless (eq t (dsd-raw-type slotd))
+      (error "Cannot use COMPARE-AND-SWAP with structure accessor ~
+                for a typed slot: ~S"
+             place))
+    (when (dsd-read-only slotd)
+      (error "Cannot use COMPARE-AND-SWAP with structure accessor ~
+                for a read-only slot: ~S"
+             place))
+    (destructuring-bind (op arg) place
+      (aver (eq op name))
+      (with-unique-names (instance old new)
+        (values (list instance)
+                (list arg)
+                old
+                new
+                `(truly-the (values ,type &optional)
+                            (%compare-and-swap-instance-ref
+                             (the ,structure ,@instance)
+                             ,index
+                             (the ,type ,old)
+                             (the ,type ,new))))))))
+
+(defmacro define-cas-expander (accessor lambda-list &body body)
+  (with-unique-names (whole environment)
+    (multiple-value-bind (body decls doc)
+        (parse-defmacro lambda-list whole body accessor
+                        'define-cas-expander
+                        :environment environment
+                        :wrap-block nil)
+      `(eval-when (:compile-toplevel :load-toplevel :execute)
+         (setf (gethash ',accessor **cas-expanders**)
+               (named-lambda (cas-expander ,accessor) (,whole ,environment)
+                 ,@(when doc (list doc))
+                 ,@decls
+                 ,body))))))
+
+(defmacro defcas (&whole form accessor lambda-list function
+                  &optional docstring)
+  (multiple-value-bind (reqs opts restp rest keyp keys allowp auxp)
+      (parse-lambda-list lambda-list)
+    (declare (ignore keys))
+    (when (or keyp allowp auxp)
+      (error "&KEY, &AUX, and &ALLOW-OTHER-KEYS not allowed in DEFCAS ~
+              lambda-list.~%  ~S" form))
+    `(define-cas-expander ,accessor ,lambda-list
+       ,@(when docstring (list docstring))
+       (let ((temps (mapcar #'gensymify
+                            ',(append reqs opts
+                                      (when restp (list (gensymify rest))))))
+             (args (list ,@(append reqs
+                                   opts
+                                   (when restp (list rest)))))
+             (old (gensym "OLD"))
+             (new (gensym "NEW")))
+         (values temps
+                 args
+                 old
+                 new
+                 `(,',function ,@temps ,old ,new))))))
+
+(defcas car (cons) %compare-and-swap-car)
+(defcas cdr (cons) %compare-and-swap-cdr)
+(defcas first (cons) %compare-and-swap-car)
+(defcas rest (cons) %compare-and-swap-cdr)
+(defcas symbol-plist (symbol) %compare-and-swap-symbol-plist)
+
+(define-cas-expander symbol-value (name &environment env)
+  (with-unique-names (tmp old new)
+    (values (list tmp)
+            (list name)
+            old
+            new
+            (flet ((slow (name)
+                     (with-unique-names (n-name n-old n-new)
+                       `(let ((,n-name ,name)
+                              (,n-old ,old)
+                              (,n-new ,new))
+                          (declare (symbol ,n-name))
+                          (about-to-modify-symbol-value ,n-name 'compare-and-swap ,n-new)
+                          (%compare-and-swap-symbol-value ,n-name ,n-old ,n-new)))))
+              (if (constantp name env)
+                  (let ((cname (constant-form-value name env)))
+                    (if (member (info :variable :kind cname) '(:special :global))
+                        ;; We can generate the type-check reasonably.
+                        `(%compare-and-swap-symbol-value
+                          ',cname ,old (the ,(info :variable :type cname) ,new))
+                        (slow (list 'quote cname))))
+                  (slow name))))))
+
+(define-cas-expander svref (vector index)
+  (with-unique-names (v i old new)
+    (values (list v i)
+            (list vector index)
+            old
+            new
+            `(locally (declare (simple-vector ,v))
+               (%compare-and-swap-svref ,v (%check-bound ,v (length ,v) ,i) ,old ,new)))))
+
+(defmacro compare-and-swap (place old new)
   #!+sb-doc
   "Atomically stores NEW in PLACE if OLD matches the current value of PLACE.
 Two values are considered to match if they are EQ. Returns the previous value
@@ -81,72 +244,14 @@ of PLACE: if the returned value is EQ to OLD, the swap was carried out.
 
 PLACE must be an accessor form whose CAR is one of the following:
 
- CAR, CDR, FIRST, REST, SYMBOL-PLIST, SYMBOL-VALUE, SVREF
+ CAR, CDR, FIRST, REST, STANDARD-INSTANCE-ACCESS, SYMBOL-PLIST, SYMBOL-VALUE, SVREF
 
 or the name of a DEFSTRUCT created accessor for a slot whose declared type is
 either FIXNUM or T. Results are unspecified if the slot has a declared type
 other then FIXNUM or T.
 
 EXPERIMENTAL: Interface subject to change."
-  (flet ((invalid-place ()
-           (error "Invalid first argument to COMPARE-AND-SWAP: ~S" place)))
-    (unless (consp place)
-      (invalid-place))
-  ;; FIXME: Not the nicest way to do this...
-  (destructuring-bind (op &rest args) place
-    (case op
-      ((car first)
-       `(%compare-and-swap-car (the cons ,@args) ,old ,new))
-      ((cdr rest)
-       `(%compare-and-swap-cdr (the cons ,@args) ,old ,new))
-      (symbol-plist
-       `(%compare-and-swap-symbol-plist (the symbol ,@args) ,old (the list ,new)))
-      (symbol-value
-       (destructuring-bind (name) args
-         (flet ((slow (symbol)
-                  (with-unique-names (n-symbol n-old n-new)
-                    `(let ((,n-symbol ,symbol)
-                           (,n-old ,old)
-                           (,n-new ,new))
-                       (declare (symbol ,n-symbol))
-                       (about-to-modify-symbol-value ,n-symbol 'compare-and-swap ,n-new)
-                       (%compare-and-swap-symbol-value ,n-symbol ,n-old ,n-new)))))
-           (if (sb!xc:constantp name env)
-               (let ((cname (constant-form-value name env)))
-                 (if (eq :special (info :variable :kind cname))
-                     ;; Since we know the symbol is a special, we can just generate
-                     ;; the type check.
-                     `(%compare-and-swap-symbol-value
-                       ',cname ,old (the ,(info :variable :type cname) ,new))
-                     (slow (list 'quote cname))))
-               (slow name)))))
-      (svref
-       (let ((vector (car args))
-             (index (cadr args)))
-         (unless (and vector index (not (cddr args)))
-           (invalid-place))
-         (with-unique-names (v)
-           `(let ((,v ,vector))
-              (declare (simple-vector ,v))
-              (%compare-and-swap-svref ,v (%check-bound ,v (length ,v) ,index) ,old ,new)))))
-      (t
-       (let ((dd (info :function :structure-accessor op)))
-         (if dd
-             (let* ((structure (dd-name dd))
-                    (slotd (find op (dd-slots dd) :key #'dsd-accessor-name))
-                    (index (dsd-index slotd))
-                    (type (dsd-type slotd)))
-               (unless (eq t (dsd-raw-type slotd))
-                 (error "Cannot use COMPARE-AND-SWAP with structure accessor for a typed slot: ~S"
-                        place))
-               (when (dsd-read-only slotd)
-                 (error "Cannot use COMPARE-AND-SWAP with structure accessor for a read-only slot: ~S"
-                        place))
-               `(truly-the (values ,type &optional)
-                           (%compare-and-swap-instance-ref (the ,structure ,@args)
-                                                           ,index
-                                                           (the ,type ,old) (the ,type ,new))))
-             (error "Invalid first argument to COMPARE-AND-SWAP: ~S" place))))))))
+  `(cas ,place ,old ,new))
 
 (macrolet ((def (name lambda-list ref &optional set)
              #!+compare-and-swap-vops
@@ -167,6 +272,8 @@ EXPERIMENTAL: Interface subject to change."
   (def %compare-and-swap-symbol-plist (symbol) symbol-plist)
   (def %compare-and-swap-symbol-value (symbol) symbol-value)
   (def %compare-and-swap-svref (vector index) svref))
+
+;;;; ATOMIC-INCF and ATOMIC-DECF
 
 (defun expand-atomic-frob (name place diff)
   (flet ((invalid-place ()
