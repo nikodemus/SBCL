@@ -470,12 +470,10 @@ Examples:
 (defun ir1-phases (component)
   (declare (type component component))
   (aver-live-component component)
-  (let ((*constraint-universe* (make-array 64 ; arbitrary, but don't
-                                              ;make this 0.
-                                           :fill-pointer 0 :adjustable t))
+  (let ((*constraint-number* 0)
         (loop-count 1)
         (*delayed-ir1-transforms* nil))
-    (declare (special *constraint-universe* *delayed-ir1-transforms*))
+    (declare (special *constraint-number* *delayed-ir1-transforms*))
     (loop
       (ir1-optimize-until-done component)
       (when (or (component-new-functionals component)

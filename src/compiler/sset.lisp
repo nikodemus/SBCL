@@ -32,7 +32,7 @@
   ;; initializing a vector with 0 is cheaper than with NIL), +DELETED+
   ;; is used to mark buckets that used to contain an element, but no
   ;; longer do.
-  (vector #() :type simple-vector)
+  (vector (make-array 8 :initial-element 0) :type simple-vector)
   ;; How many buckets currently contain or used to contain an element.
   (free 0 :type index)
   ;; How many elements are currently members of the set.
@@ -47,37 +47,9 @@
               ,@body)
          finally (return ,result)))
 
-;;; Primary hash.
-(declaim (inline sset-hash1))
-(defun sset-hash1 (element)
-  #+sb-xc-host
-  (let ((result (sset-element-number element)))
-    ;; This is performance critical, and it's not certain that the host
-    ;; compiler does modular arithmetic optimization. Instad use
-    ;; something that most CL implementations will do efficiently.
-    (the fixnum (logxor (the fixnum result)
-                        (the fixnum (ash result -9))
-                        (the fixnum (ash result -5)))))
-  #-sb-xc-host
-  (let ((result (sset-element-number element)))
-    (declare (type sb!vm:word result))
-    ;; We only use the low-order bits.
-    (macrolet ((set-result (form)
-                 `(setf result (ldb (byte #.sb!vm:n-word-bits 0) ,form))))
-      (set-result (+ result (ash result -19)))
-      (set-result (logxor result (ash result -13)))
-      (set-result (+ result (ash result -9)))
-      (set-result (logxor result (ash result -5)))
-      (set-result (+ result (ash result -2)))
-      (logand sb!xc:most-positive-fixnum result))))
-
-;;; Secondary hash (for double hash probing). Needs to return an odd
-;;; number.
-(declaim (inline sset-hash2))
-(defun sset-hash2 (element)
-  (let ((number (sset-element-number element)))
-    (declare (fixnum number))
-    (logior 1 number)))
+(declaim (inline sset-hash))
+(defun sset-hash (element)
+  (sxhash (the fixnum (sset-element-number element))))
 
 ;;; Double the size of the hash vector of SET.
 (defun sset-grow (set)
@@ -109,9 +81,8 @@
     (sset-grow set))
   (loop with vector = (sset-vector set)
         with mask of-type fixnum = (1- (length vector))
-        with secondary-hash = (sset-hash2 element)
-        for hash of-type index = (logand mask (sset-hash1 element)) then
-          (logand mask (+ hash secondary-hash))
+        for hash of-type index = (logand mask (sset-hash element)) then
+           (logand mask (+ hash 1))
         for current = (aref vector hash)
         for deleted-index = nil
         do (cond ((eql current 0)
@@ -136,9 +107,8 @@
     (return-from sset-delete nil))
   (loop with vector = (sset-vector set)
         with mask fixnum = (1- (length vector))
-        with secondary-hash = (sset-hash2 element)
-        for hash of-type index = (logand mask (sset-hash1 element)) then
-          (logand mask (+ hash secondary-hash))
+        for hash of-type index = (logand mask (sset-hash element)) then
+          (logand mask (+ hash 1))
         for current = (aref vector hash)
         do (cond ((eql current 0)
                   (return nil))
@@ -154,9 +124,8 @@
     (return-from sset-member nil))
   (loop with vector = (sset-vector set)
         with mask fixnum = (1- (length vector))
-        with secondary-hash = (sset-hash2 element)
-        for hash of-type index = (logand mask (sset-hash1 element)) then
-          (logand mask (+ hash secondary-hash))
+        for hash of-type index = (logand mask (sset-hash element)) then
+          (logand mask (+ hash 1))
         for current = (aref vector hash)
         do (cond ((eql current 0)
                   (return nil))

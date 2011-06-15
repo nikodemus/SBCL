@@ -48,10 +48,8 @@
 
 (in-package "SB!C")
 
-;;; *CONSTRAINT-UNIVERSE* gets bound in IR1-PHASES to a fresh,
-;;; zero-length, non-zero-total-size vector-with-fill-pointer.
-(declaim (type (and vector (not simple-vector)) *constraint-universe*))
-(defvar *constraint-universe*)
+(declaim (unsigned-byte *constraint-number*))
+(defvar *constraint-number*)
 
 (deftype constraint-y () '(or ctype lvar lambda-var constant))
 
@@ -96,7 +94,6 @@
 ;;; for constraint propagation, or if bit-vectors on some XC host
 ;;; really lose compared to SSETs, here's the conset API as a wrapper
 ;;; around SSETs:
-#+nil
 (progn
   (deftype conset () 'sset)
   (declaim (ftype (sfunction (conset) boolean) conset-empty))
@@ -131,6 +128,7 @@
   (defun conset-difference (conset1 conset2)
     (sset-difference conset1 conset2) (values)))
 
+#+nil
 (locally
     ;; This is performance critical for the compiler, and benefits
     ;; from the following declarations.  Probably you'll want to
@@ -354,10 +352,8 @@
 (defun find-or-create-constraint (kind x y not-p)
   (declare (type lambda-var x) (type constraint-y y) (type boolean not-p))
   (or (find-constraint kind x y not-p)
-      (let ((new (make-constraint (length *constraint-universe*)
+      (let ((new (make-constraint (incf *constraint-number*)
                                   kind x y not-p)))
-        (vector-push-extend new *constraint-universe*
-                            (1+ (length *constraint-universe*)))
         (conset-adjoin new (lambda-var-constraints x))
         (when (lambda-var-p y)
           (conset-adjoin new (lambda-var-constraints y)))
