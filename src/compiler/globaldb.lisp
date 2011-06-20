@@ -138,12 +138,9 @@
 ;;; practice because the cross-compiler is as close to the target
 ;;; compiler as we can make it, i.e. identical in most ways, including
 ;;; this one. -- WHN 2001-08-19
-(defvar *info-types*)
 (declaim (type simple-vector *info-types*))
-#-sb-xc ; as per KLUDGE note above
-(eval-when (:compile-toplevel :execute)
-  (setf *info-types*
-        (make-array (ash 1 type-number-bits) :initial-element nil)))
+(defglobal *info-types*
+    (make-array (ash 1 type-number-bits) :initial-element nil))
 
 (defstruct (type-info
             #-no-ansi-print-object
@@ -176,11 +173,8 @@
 ;;; KLUDGE: Just as for *INFO-TYPES*, we don't try to rebuild this
 ;;; when cross-compiling, but instead just reuse the cross-compiler's
 ;;; version for the target compiler. -- WHN 2001-08-19
-(defvar *info-classes*)
 (declaim (hash-table *info-classes*))
-#-sb-xc ; as per KLUDGE note above
-(eval-when (:compile-toplevel :execute)
-  (setf *info-classes* (make-hash-table :test #'eq)))
+(defglobal *info-classes* (make-hash-table :test #'eq))
 
 ;;; If NAME is the name of a type in CLASS, then return the TYPE-INFO,
 ;;; otherwise NIL.
