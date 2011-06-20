@@ -201,3 +201,11 @@
   name)
 
 (declaim (declaration enable-package-locks disable-package-locks))
+
+(declaim (inline symbol-info))
+(defun symbol-info (symbol)
+  (get symbol 'xc-symbol-info))
+
+(declaim (inline (setf symbol-info)))
+(defun (setf symbol-info) (new symbol)
+  (setf (get symbol 'xc-symbol-info) new))

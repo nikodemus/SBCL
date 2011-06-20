@@ -824,6 +824,7 @@ core and return a descriptor to it."
                        sb!vm:symbol-hash-slot
                        (make-fixnum-descriptor 0))
     (write-wordindexed symbol sb!vm:symbol-plist-slot *nil-descriptor*)
+    (write-wordindexed symbol sb!vm:symbol-info-slot *nil-descriptor*)
     (write-wordindexed symbol sb!vm:symbol-name-slot
                        (base-string-to-core name *dynamic*))
     (write-wordindexed symbol sb!vm:symbol-package-slot *nil-descriptor*)
@@ -1167,6 +1168,9 @@ core and return a descriptor to it."
                        result)
     (write-wordindexed des
                        (+ 1 sb!vm:symbol-plist-slot)
+                       result)
+    (write-wordindexed des
+                       (+ 1 sb!vm:symbol-info-slot)
                        result)
     (write-wordindexed des
                        (+ 1 sb!vm:symbol-name-slot)

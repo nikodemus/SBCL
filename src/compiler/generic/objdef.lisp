@@ -333,11 +333,16 @@
          :cas-trans %compare-and-swap-symbol-plist
          :type list
          :init :null)
+  (info :ref-trans symbol-info :ref-known (flushable always-translatable)
+        :set-trans (setf symbol-info) :set-known (unsafe always-translatable)
+        :type (or null simple-vector)
+        :init :null)
   (name :ref-trans symbol-name :init :arg)
   (package :ref-trans symbol-package
            :set-trans %set-symbol-package
            :init :null)
-  #!+sb-thread (tls-index :ref-known (flushable) :ref-trans symbol-tls-index))
+  #!+sb-thread
+  (tls-index :ref-known (flushable) :ref-trans symbol-tls-index))
 
 (define-primitive-object (complex-single-float
                           :lowtag other-pointer-lowtag

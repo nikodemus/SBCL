@@ -249,4 +249,5 @@
       (inst and temp #xfffffffc)
       (storew temp result symbol-hash-slot other-pointer-lowtag)
       (storew nil-value result symbol-plist-slot other-pointer-lowtag)
+      (storew nil-value result symbol-info-slot other-pointer-lowtag)
       (storew nil-value result symbol-package-slot other-pointer-lowtag))))

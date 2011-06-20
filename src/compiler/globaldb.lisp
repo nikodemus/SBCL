@@ -685,6 +685,26 @@
       (error "cannot modify this environment: ~S" env))
     (the volatile-info-env env)))
 
+(defun find-info-index (type vector)
+  (declare (type-number type)
+           (simple-vector vector)
+           (optimize speed))
+  (labels ((recurse (start end)
+             (declare (index start end))
+             (when (< start end)
+               (let* ((i (logand most-positive-fixnum
+                                 (+ start (truncate (- end start) 2))))
+                      (k (svref vector (* i 2))))
+                 (declare (fixnum k i))
+                 (cond ((eql k type)
+                        (logand most-positive-fixnum (+ (* i 2) 1)))
+                       ((< type k)
+                        (recurse start i))
+                       (t
+                        (recurse (logand most-positive-fixnum (+ i 1))
+                                 end)))))))
+    (recurse 0 (truncate (length vector) 2))))
+
 ;;; If Name is already present in the table, then just create or
 ;;; modify the specified type. Otherwise, add the new name and type,
 ;;; checking for rehashing.
@@ -700,35 +720,61 @@
   (let ((name (uncross name0)))
     (when (eql name 0)
       (error "0 is not a legal INFO name."))
-    (labels ((set-it (name type new-value env)
-               (declare (type type-number type)
-                         (type volatile-info-env env))
-               (with-info-bucket (table index name env)
-                 (let ((types (if (symbolp name)
-                                  (assoc name (svref table index) :test #'eq)
-                                  (assoc name (svref table index) :test #'equal))))
-                   (cond
-                     (types
-                      (let ((value (assoc type (cdr types))))
-                        (if value
-                            (setf (cdr value) new-value)
-                            (push (cons type new-value) (cdr types)))))
-                     (t
-                      (push (cons name (list (cons type new-value)))
-                            (svref table index))
+    (if (symbolp name)
+        (let ((info (symbol-info name)))
+          (when info
+            (let ((idx (find-info-index type info)))
+              (when idx
+                ;; Replace existing value in vector.
+                (return-from set-info-value
+                  (setf (svref info idx) new-value)))))
+          ;; Allocate a new vector.
+          (let ((new (make-array (+ 2 (length info))))
+                (j 0))
+            ;; Old elements smaller than new.
+            (loop for i from 0 by 2 below (length info)
+                  for k = (svref info i)
+                  while (< k type)
+                  do (setf (svref new i) k
+                           (svref new (+ i 1)) (svref info (+ i 1)))
+                  finally (setf j i))
+            ;; New element
+            (setf (svref new j) type
+                  (svref new (+ j 1)) new-value)
+            ;; Old elements greater than new.
+            (loop for i from j below (length info)
+                  do (setf (svref new (+ i 2)) (svref info i)))
+            ;; Save the new vector.
+            (setf (symbol-info name) new)))
+        (labels ((set-it (name type new-value env)
+                   (declare (type type-number type)
+                            (type volatile-info-env env))
+                   (with-info-bucket (table index name env)
+                     (let ((types (if (symbolp name)
+                                      (assoc name (svref table index) :test #'eq)
+                                      (assoc name (svref table index) :test #'equal))))
+                       (cond
+                         (types
+                          (let ((value (assoc type (cdr types))))
+                            (if value
+                                (setf (cdr value) new-value)
+                                (push (cons type new-value) (cdr types)))))
+                         (t
+                          (push (cons name (list (cons type new-value)))
+                                (svref table index))
 
-                      (let ((count (incf (volatile-info-env-count env))))
-                        (when (>= count (volatile-info-env-threshold env))
-                          (let ((new (make-info-environment :size (* count 2))))
-                            (do-info (env :name entry-name :type-number entry-num
-                                          :value entry-val :known-volatile t)
-                              (set-it entry-name entry-num entry-val new))
-                            (fill (volatile-info-env-table env) nil)
-                            (setf (volatile-info-env-table env)
-                                  (volatile-info-env-table new))
-                            (setf (volatile-info-env-threshold env)
-                                  (volatile-info-env-threshold new)))))))))))
-      (set-it name type new-value (get-write-info-env)))
+                          (let ((count (incf (volatile-info-env-count env))))
+                            (when (>= count (volatile-info-env-threshold env))
+                              (let ((new (make-info-environment :size (* count 2))))
+                                (do-info (env :name entry-name :type-number entry-num
+                                              :value entry-val :known-volatile t)
+                                  (set-it entry-name entry-num entry-val new))
+                                (fill (volatile-info-env-table env) nil)
+                                (setf (volatile-info-env-table env)
+                                      (volatile-info-env-table new))
+                                (setf (volatile-info-env-threshold env)
+                                      (volatile-info-env-threshold new)))))))))))
+          (set-it name type new-value (get-write-info-env))))
     new-value))
 
 ;;; INFO is the standard way to access the database. It's settable.
@@ -761,14 +807,27 @@
     (clear-info-value name (type-info-number info))))
 
 (defun clear-info-value (name type)
-  (declare (type type-number type) (inline assoc))
-  (with-info-bucket (table index name (get-write-info-env))
-    (let ((types (assoc name (svref table index) :test #'equal)))
-      (when (and types
-                 (assoc type (cdr types)))
-        (setf (cdr types)
-              (delete type (cdr types) :key #'car))
-        t))))
+  (declare (type type-number type))
+  (let ((name (uncross name)))
+    (if (symbolp name)
+        (let ((info (symbol-info name)))
+          (when info
+            (let ((idx (find-info-index type info)))
+              (when idx
+                (let* ((size (length info))
+                       (new (make-array (- size 2)))
+                       (more (+ idx 1)))
+                  (replace new info :end2 (- idx 1))
+                  (when (> size more)
+                    (replace new info :start1 idx :start2 more)))
+                t))))
+        (with-info-bucket (table index name (get-write-info-env))
+          (let ((types (assoc name (svref table index) :test #'equal)))
+            (when (and types
+                       (assoc type (cdr types)))
+              (setf (cdr types)
+                    (delete type (cdr types) :key #'car))
+              t))))))
 
 ;;; the maximum density of the hashtable in a volatile env (in
 ;;; names/bucket)
@@ -814,22 +873,29 @@
   ;; sbcl-0.pre7.x.)
   (aver (aref *info-types* type))
   (let ((name (uncross name0)))
-    (flet ((lookup (env-list)
-             (dolist (env env-list
-                          (multiple-value-bind (val winp)
-                              (funcall (type-info-default
-                                        (svref *info-types* type))
-                                       name)
-                            (values val winp)))
-               (macrolet ((frob (lookup)
-                            `(let ((hash (globaldb-sxhashoid name)))
-                               (multiple-value-bind (value winp)
-                                   (,lookup env name hash type)
-                                 (when winp (return (values value t)))))))
-                 (etypecase env
-                   (volatile-info-env (frob volatile-info-lookup))
-                   (compact-info-env (frob compact-info-lookup)))))))
-      (lookup *info-environment*))))
+    (labels ((get-default ()
+               (multiple-value-bind (val winp)
+                   (funcall (type-info-default (svref *info-types* type))
+                            name)
+                 (values val winp)))
+             (lookup ()
+               (dolist (env *info-environment* (get-default))
+                 (macrolet ((frob (lookup)
+                              `(let ((hash (globaldb-sxhashoid name)))
+                                 (multiple-value-bind (value winp)
+                                     (,lookup env name hash type)
+                                   (when winp (return (values value t)))))))
+                   (etypecase env
+                     (volatile-info-env (frob volatile-info-lookup))
+                     (compact-info-env (frob compact-info-lookup)))))))
+      (if (symbolp name)
+          (let ((info (symbol-info name)))
+            (when info
+              (let ((idx (find-info-index type info)))
+                (when idx
+                  (return-from get-info-value (values (svref info idx) t)))))
+            (get-default))
+          (lookup)))))
 
 ;;;; definitions for function information
 
