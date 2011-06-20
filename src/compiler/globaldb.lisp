@@ -667,6 +667,33 @@
                                  (length ,table-var))))
            ,@body)))))
 
+;;; the maximum density of the hashtable in a volatile env (in
+;;; names/bucket)
+;;;
+;;; FIXME: actually seems to be measured in percent, should be
+;;; converted to be measured in names/bucket
+(def!constant volatile-info-environment-density 50)
+
+;;; Make a new volatile environment of the specified size.
+(defun make-info-environment (&key (size 42) (name "Unknown"))
+  (declare (type (integer 1) size))
+  (let ((table-size (primify (truncate (* size 100)
+                                       volatile-info-environment-density))))
+    (make-volatile-info-env :name name
+                            :table (make-array table-size :initial-element nil)
+                            :threshold size)))
+
+;;;; *INFO-ENVIRONMENT*
+
+;;; We do info access relative to the current *INFO-ENVIRONMENT*, a
+;;; list of INFO-ENVIRONMENT structures.
+(declaim (type list *info-environment*))
+(defglobal *info-environment* nil)
+(!cold-init-forms
+  (setq *info-environment*
+        (list (make-info-environment :name "initial global")))
+  (/show0 "done setting *INFO-ENVIRONMENT*"))
+
 ;;; Get the info environment that we use for write/modification operations.
 ;;; This is always the first environment in the list, and must be a
 ;;; VOLATILE-INFO-ENV.
@@ -822,35 +849,6 @@
               (setf (cdr types)
                     (delete type (cdr types) :key #'car))
               t))))))
-
-;;; the maximum density of the hashtable in a volatile env (in
-;;; names/bucket)
-;;;
-;;; FIXME: actually seems to be measured in percent, should be
-;;; converted to be measured in names/bucket
-(def!constant volatile-info-environment-density 50)
-
-;;; Make a new volatile environment of the specified size.
-(defun make-info-environment (&key (size 42) (name "Unknown"))
-  (declare (type (integer 1) size))
-  (let ((table-size (primify (truncate (* size 100)
-                                       volatile-info-environment-density))))
-    (make-volatile-info-env :name name
-                            :table (make-array table-size :initial-element nil)
-                            :threshold size)))
-
-;;;; *INFO-ENVIRONMENT*
-
-;;; We do info access relative to the current *INFO-ENVIRONMENT*, a
-;;; list of INFO-ENVIRONMENT structures.
-(defvar *info-environment*)
-(declaim (type list *info-environment*))
-(!cold-init-forms
-  (setq *info-environment*
-        (list (make-info-environment :name "initial global")))
-  (/show0 "done setting *INFO-ENVIRONMENT*"))
-;;; FIXME: should perhaps be *INFO-ENV-LIST*. And rename
-;;; all FOO-INFO-ENVIRONMENT-BAR stuff to FOO-INFO-ENV-BAR.
 
 ;;;; GET-INFO-VALUE
 

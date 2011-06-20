@@ -1655,12 +1655,6 @@ Examples:
         (*last-format-string* nil)
         (*last-format-args* nil)
         (*last-message-count* 0)
-        ;; FIXME: Do we need this rebinding here? It's a literal
-        ;; translation of the old CMU CL rebinding to
-        ;; (OR *BACKEND-INFO-ENVIRONMENT* *INFO-ENVIRONMENT*),
-        ;; and it's not obvious whether the rebinding to itself is
-        ;; needed that SBCL doesn't need *BACKEND-INFO-ENVIRONMENT*.
-        (*info-environment* *info-environment*)
         (*compiler-sset-counter* 0)
         (sb!xc:*gensym-counter* 0))
     (handler-case
