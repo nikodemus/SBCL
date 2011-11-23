@@ -66,7 +66,7 @@ os_validate(os_vm_address_t addr, os_vm_size_t len)
     else  flags |= MAP_VARIABLE;
 
     if((addr=mmap(addr,len,OS_VM_PROT_ALL,flags,-1,0)) == (os_vm_address_t) -1)
-        perror("mmap");
+        return NULL;
 
     return addr;
 }

@@ -319,20 +319,18 @@ os_validate(os_vm_address_t addr, os_vm_size_t len)
         addr=under_2gb_free_pointer;
     }
 #endif
+
     actual = mmap(addr, len, OS_VM_PROT_ALL, flags, -1, 0);
     if (actual == MAP_FAILED) {
-        perror("mmap");
-        return 0;               /* caller should check this */
+        return NULL;
     }
-
     if (addr && (addr!=actual)) {
-        fprintf(stderr, "mmap: wanted %lu bytes at %p, actually mapped at %p\n",
-                (unsigned long) len, addr, actual);
-        return 0;
+        munmap(actual, len);
+        errno=ENOMEM;
+        return NULL;
     }
 
 #ifdef LISP_FEATURE_ALPHA
-
     len=(len+(os_vm_page_size-1))&(~(os_vm_page_size-1));
     under_2gb_free_pointer+=len;
 #endif

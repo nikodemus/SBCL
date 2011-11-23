@@ -68,14 +68,25 @@ extern void os_install_interrupt_handlers(void);
  * and simplify if the difference isn't too large. */
 extern void os_zero(os_vm_address_t addr, os_vm_size_t length);
 
-/* It looks as though this function allocates 'len' bytes at 'addr',
- * or at an OS-chosen address if 'addr' is zero.
+/* our interface to mmap(2) or equivalent
  *
- * FIXME: There was some documentation for these functions in
- * "hp-ux.c" in the old CMU CL code. Perhaps move/merge it in here. */
+ * Tries to map len bytes of memory, starting from addr. If addr is
+ * NULL, just tries to map anywhere. Mapped memory is zero-filled.
+ *
+ * On success, returns the address.
+ * On failure, return 0 and sets errno.
+ *
+ * If we specified an address but the mapping happened elsewhere,
+ * we use errno=ENOMEM.
+ */
 extern os_vm_address_t os_validate(os_vm_address_t addr, os_vm_size_t len);
 
-/* This function seems to undo the effect of os_validate(..). */
+/* our interface to munmap(2) or equivalent
+ *
+ * Undoes the work of os_validate.
+ *
+ * Complains to stderr on failure. (FIXME?)
+ */
 extern void os_invalidate(os_vm_address_t addr, os_vm_size_t len);
 
 /* This maps a file into memory, or calls lose(..) for various
