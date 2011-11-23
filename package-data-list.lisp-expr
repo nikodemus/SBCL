@@ -2544,6 +2544,7 @@ structure representations"
       :reexport ("WORD")
       :export ("*ALLOC-SIGNAL*"
                "*ASSEMBLY-UNIT-LENGTH*"
+               "*HEAP-EXTENSION*"
                "*PRIMITIVE-OBJECTS*"
                "+HIGHEST-NORMAL-GENERATION+"
                "+PSEUDO-STATIC-GENERATION+"

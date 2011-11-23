@@ -73,6 +73,7 @@ struct page {
          * written during a GC. */
         write_protected_cleared :1,
         /*  000 free
+         *  100 reserved
          *  ?01 boxed data
          *  ?11 boxed code
          *  ?01 unboxed data
@@ -81,7 +82,12 @@ struct page {
          * #defines below.
          *
          * If the page is free the following slots are invalid, except
-         * for the bytes_used which must be zero. */
+         * for the bytes_used which must be zero.
+         *
+         * If the page is reserved, dont_move=1 means it is not part
+         * of our heap at all, but a hole in it. dont_move=0 means
+         * we are allowed to toggle it to free.
+         */
         allocated :3,
         /* If this page should not be moved during a GC then this flag
          * is set. It's only valid during a GC for allocated pages. */
@@ -106,7 +112,9 @@ struct page {
 #define BOXED_PAGE_FLAG       1
 #define UNBOXED_PAGE_FLAG     2
 #define CODE_PAGE_FLAG        (BOXED_PAGE_FLAG|UNBOXED_PAGE_FLAG)
+#define PAGE_TYPE_MASK        (BOXED_PAGE_FLAG|UNBOXED_PAGE_FLAG)
 #define OPEN_REGION_PAGE_FLAG 4
+#define RESERVED_PAGE_FLAG    4
 
 
 extern page_index_t page_table_pages;

@@ -476,6 +476,7 @@ create_thread_struct(lispobj initial_function) {
     SetSymbolValue(PSEUDO_ATOMIC_BITS,(lispobj)th->pseudo_atomic_bits,th);
 #endif
 #endif
+    bind_variable(HEAP_EXTENSION,make_fixnum(0),th);
     bind_variable(CURRENT_CATCH_BLOCK,make_fixnum(0),th);
     bind_variable(CURRENT_UNWIND_PROTECT_BLOCK,make_fixnum(0),th);
     bind_variable(FREE_INTERRUPT_CONTEXT_INDEX,make_fixnum(0),th);

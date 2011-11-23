@@ -22,6 +22,7 @@
                   *stderr*
                   *tty*
                   *read-only-space-free-pointer*
+                  sb!vm:*heap-extension*
                   sb!vm:*static-space-free-pointer*
                   sb!vm::*current-catch-block*
                   sb!vm::*current-unwind-protect-block*

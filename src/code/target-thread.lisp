@@ -1367,6 +1367,21 @@ change."
 ;;; Called from the signal handler.
 #!-win32
 (defun run-interruption ()
+  (unless (eql 0 sb!vm:*heap-extension*)
+    (let (cont)
+      (unwind-protect
+           (let ((c (make-condition
+                     'simple-storage-condition
+                     :format-control "Heap extended into reserve area by ~S bytes."
+                     :format-arguments (list '?)))
+                 (ext sb!vm:*heap-extension*))
+             (setf sb!vm:*heap-extension* 0
+                   (car (simple-condition-format-arguments c)) ext)
+             (with-interrupts
+               (cerror "Continue" c))
+             (setf cont t))
+        (when (and (not cont) (thread-interruptions *current-thread*))
+          (kill-safely (thread-os-thread *current-thread*) sb!unix:sigpipe)))))
   (let ((interruption (with-interruptions-lock (*current-thread*)
                         (pop (thread-interruptions *current-thread*)))))
     ;; If there is more to do, then resignal and let the normal

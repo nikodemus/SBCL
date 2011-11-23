@@ -168,19 +168,27 @@ static boolean conservative_stack = 1;
  * This helps quickly map between an address its page structure.
  * page_table_pages is set from the size of the dynamic space. */
 page_index_t page_table_pages;
+page_index_t page_table_reserved_pages;
 struct page *page_table;
 
 static inline boolean page_allocated_p(page_index_t page) {
-    return (page_table[page].allocated != FREE_PAGE_FLAG);
+    return (page_table[page].allocated & PAGE_TYPE_MASK);
 }
 
-static inline boolean page_no_region_p(page_index_t page) {
+static inline boolean page_reserved_p(page_index_t page) {
+    return (page_table[page].allocated == RESERVED_PAGE_FLAG);
+}
+
+static inline boolean page_reserved_ours_p(page_index_t page) {
+    return page_reserved_p(page) && !page_table[page].dont_move;
+}
+
+static inline boolean page_closed_p(page_index_t page) {
     return !(page_table[page].allocated & OPEN_REGION_PAGE_FLAG);
 }
 
-static inline boolean page_allocated_no_region_p(page_index_t page) {
-    return ((page_table[page].allocated & (UNBOXED_PAGE_FLAG | BOXED_PAGE_FLAG))
-            && page_no_region_p(page));
+static inline boolean page_allocated_closed_p(page_index_t page) {
+    return page_allocated_p(page) && page_closed_p(page);
 }
 
 static inline boolean page_free_p(page_index_t page) {
@@ -195,8 +203,8 @@ static inline boolean code_page_p(page_index_t page) {
     return (page_table[page].allocated & CODE_PAGE_FLAG);
 }
 
-static inline boolean page_boxed_no_region_p(page_index_t page) {
-    return page_boxed_p(page) && page_no_region_p(page);
+static inline boolean page_boxed_closed_p(page_index_t page) {
+    return page_boxed_p(page) && page_closed_p(page);
 }
 
 static inline boolean page_unboxed_p(page_index_t page) {
@@ -206,7 +214,7 @@ static inline boolean page_unboxed_p(page_index_t page) {
 }
 
 static inline boolean protect_page_p(page_index_t page, generation_index_t generation) {
-    return (page_boxed_no_region_p(page)
+    return (page_boxed_closed_p(page)
             && (page_table[page].bytes_used != 0)
             && !page_table[page].dont_move
             && (page_table[page].gen == generation));
@@ -1227,8 +1235,6 @@ gc_alloc_large(long nbytes, int page_type_flag, struct alloc_region *alloc_regio
     return page_address(first_page);
 }
 
-static page_index_t gencgc_alloc_start_page = -1;
-
 void
 gc_heap_exhausted_error_or_lose (long available, long requested)
 {
@@ -1266,6 +1272,8 @@ gc_heap_exhausted_error_or_lose (long available, long requested)
     }
 }
 
+static page_index_t gencgc_alloc_start_page = -1;
+
 page_index_t
 gc_find_freeish_pages(page_index_t *restart_page_ptr, long bytes,
                       int page_type_flag)
@@ -1298,6 +1306,7 @@ gc_find_freeish_pages(page_index_t *restart_page_ptr, long bytes,
      * For other objects, we guarantee that they start on their own
      * page boundary.
      */
+  restart:
     first_page = restart_page;
     while (first_page < page_table_pages) {
         bytes_found = 0;
@@ -1350,6 +1359,34 @@ gc_find_freeish_pages(page_index_t *restart_page_ptr, long bytes,
     /* Check for a failure */
     if (bytes_found < nbytes) {
         gc_assert(restart_page >= page_table_pages);
+        /* Open up some of the reserve. */
+        if (page_table_reserved_pages) {
+            long extension = CEILING(nbytes, GENCGC_CARD_BYTES);
+            page_index_t extension_pages = extension/GENCGC_CARD_BYTES;
+            if (page_table_reserved_pages >= extension_pages) {
+                page_index_t first_reserve_page
+                    = page_table_pages - page_table_reserved_pages;
+                page_index_t last_reserve_page
+                    = first_reserve_page + extension_pages;
+                struct thread *thread = arch_os_get_current_thread();
+                lispobj heap_extension;
+                for (first_page = first_reserve_page;
+                     first_page < last_reserve_page;
+                     first_page++) {
+                    gc_assert(page_reserved_ours_p(first_page));
+                    page_table[first_page].allocated = FREE_PAGE_FLAG;
+                }
+                page_table_reserved_pages -= extension_pages;
+                restart_page = first_reserve_page;
+                heap_extension = SymbolValue(HEAP_EXTENSION, thread);
+                SetSymbolValue(HEAP_EXTENSION,
+                               heap_extension + make_fixnum(extension),
+                               thread);
+                if (!heap_extension)
+                    kill_safely(arch_os_get_current_thread()->os_thread, SIGPIPE);
+                goto restart;
+            }
+        }
         gc_heap_exhausted_error_or_lose(most_bytes_found, nbytes);
     }
 
@@ -2139,7 +2176,7 @@ maybe_adjust_large_object(lispobj *where)
     remaining_bytes = nwords*N_WORD_BYTES;
     while (remaining_bytes > GENCGC_CARD_BYTES) {
         gc_assert(page_table[next_page].gen == from_space);
-        gc_assert(page_allocated_no_region_p(next_page));
+        gc_assert(page_allocated_closed_p(next_page));
         gc_assert(page_table[next_page].large_object);
         gc_assert(page_table[next_page].region_start_offset ==
                   npage_bytes(next_page-first_page));
@@ -2174,7 +2211,7 @@ maybe_adjust_large_object(lispobj *where)
     next_page++;
     while ((old_bytes_used == GENCGC_CARD_BYTES) &&
            (page_table[next_page].gen == from_space) &&
-           page_allocated_no_region_p(next_page) &&
+           page_allocated_closed_p(next_page) &&
            page_table[next_page].large_object &&
            (page_table[next_page].region_start_offset ==
             npage_bytes(next_page - first_page))) {
@@ -3980,6 +4017,10 @@ gc_init(void)
     page_table_pages = dynamic_space_size/GENCGC_CARD_BYTES;
     gc_assert(dynamic_space_size == npage_bytes(page_table_pages));
 
+    /* Reserve half the heap: this guarantees that we get at least one
+     * storage condition before the GC can fail. */
+    page_table_reserved_pages = page_table_pages/2;
+
     /* Default nursery size to 5% of the total dynamic space size,
      * min 1Mb. */
     bytes_consed_between_gcs = dynamic_space_size/(os_vm_size_t)20;
@@ -4032,6 +4073,11 @@ gc_init(void)
       char assert_free_page_flag_0[(FREE_PAGE_FLAG) ? -1 : 1];
       assert_free_page_flag_0[0] = assert_free_page_flag_0[0];
     }
+    /* Reserved pages need to be marked explicitly. */
+    for (i = page_table_pages - page_table_reserved_pages;
+         i < page_table_pages;
+         i++)
+        page_table[i].allocated = RESERVED_PAGE_FLAG;
 
     bytes_allocated = 0;
 
