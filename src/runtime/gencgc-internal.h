@@ -73,10 +73,12 @@ struct page {
          * written during a GC. */
         write_protected_cleared :1,
         /*  000 free
-         *  10? boxed data
-         *  11? boxed code
-         *  01? unboxed data
-         *  ??1 open region
+         *  ?01 boxed data
+         *  ?11 boxed code
+         *  ?01 unboxed data
+         *  1?? open region
+         *
+         * #defines below.
          *
          * If the page is free the following slots are invalid, except
          * for the bytes_used which must be zero. */
@@ -100,6 +102,11 @@ struct page {
 
 
 /* values for the page.allocated field */
+#define FREE_PAGE_FLAG        0
+#define BOXED_PAGE_FLAG       1
+#define UNBOXED_PAGE_FLAG     2
+#define CODE_PAGE_FLAG        (BOXED_PAGE_FLAG|UNBOXED_PAGE_FLAG)
+#define OPEN_REGION_PAGE_FLAG 4
 
 
 extern page_index_t page_table_pages;
@@ -147,5 +154,28 @@ new_space_p(lispobj obj)
 
 extern page_index_t last_free_page;
 extern boolean gencgc_partial_pickup;
+
+/* values for the *_alloc_* parameters */
+#define ALLOC_BOXED 0
+#define ALLOC_UNBOXED 1
+#define ALLOC_QUICK 1
+
+#include "gencgc-alloc-region.h"
+void *
+gc_alloc_with_region(long nbytes,int page_type_flag, struct alloc_region *my_region,
+                     int quick_p);
+static inline void *
+gc_general_alloc(long nbytes, int page_type_flag, int quick_p)
+{
+    struct alloc_region *my_region;
+    if (UNBOXED_PAGE_FLAG == page_type_flag) {
+        my_region = &unboxed_region;
+    } else if (BOXED_PAGE_FLAG & page_type_flag) {
+        my_region = &boxed_region;
+    } else {
+        lose("bad page type flag: %d", page_type_flag);
+    }
+    return gc_alloc_with_region(nbytes, page_type_flag, my_region, quick_p);
+}
 
 #endif

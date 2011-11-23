@@ -261,6 +261,11 @@ void_diff(void *x, void *y)
     return (pointer_sized_uint_t)x - (pointer_sized_uint_t)y;
 }
 
+boolean in_dynamic_space_p(os_vm_address_t addr)
+{
+  return in_range_p(addr, DYNAMIC_SPACE_START, dynamic_space_size);
+}
+
 /* a structure to hold the state of a generation
  *
  * CAUTION: If you modify this, make sure to touch up the alien

@@ -61,6 +61,12 @@ tv_diff(struct timeval *x, struct timeval *y)
 }
 #endif
 
+boolean in_dynamic_space_p(os_vm_address_t addr)
+{
+    return (in_range_p(addr, DYNAMIC_0_SPACE_START, dynamic_space_size) ||
+            in_range_p(addr, DYNAMIC_1_SPACE_START, dynamic_space_size));
+}
+
 void *
 gc_general_alloc(long bytes, int page_type_flag, int quick_p) {
     lispobj *new=new_space_free_pointer;
