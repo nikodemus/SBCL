@@ -261,6 +261,11 @@ size_t void_diff(void *x, void *y)
     return (pointer_sized_uint_t)x - (pointer_sized_uint_t)y;
 }
 
+boolean in_dynamic_space_p(os_vm_address_t addr)
+{
+  return in_range_p(addr, DYNAMIC_SPACE_START, dynamic_space_size);
+}
+
 /* a structure to hold the state of a generation
  *
  * CAUTION: If you modify this, make sure to touch up the alien
@@ -3988,7 +3993,7 @@ gc_free_heap(void)
     for (page = 0; page < page_table_pages; page++) {
         /* Skip free pages which should already be zero filled. */
         if (page_allocated_p(page)) {
-            void *page_start, *addr;
+            void *page_start;
             for (last_page = page;
                  (last_page < page_table_pages) && page_allocated_p(last_page);
                  last_page++) {

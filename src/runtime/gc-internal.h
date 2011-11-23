@@ -72,36 +72,7 @@ NWORDS(unsigned long x, unsigned long n_bits)
 #define FUN_RAW_ADDR_OFFSET (offsetof(struct simple_fun, code) - FUN_POINTER_LOWTAG)
 #endif
 
-/* values for the *_alloc_* parameters */
-#define FREE_PAGE_FLAG 0
-#define BOXED_PAGE_FLAG 1
-#define UNBOXED_PAGE_FLAG 2
-#define OPEN_REGION_PAGE_FLAG 4
-#define CODE_PAGE_FLAG        (BOXED_PAGE_FLAG|UNBOXED_PAGE_FLAG)
-
-#define ALLOC_BOXED 0
-#define ALLOC_UNBOXED 1
-#define ALLOC_QUICK 1
-
-#ifdef LISP_FEATURE_GENCGC
-#include "gencgc-alloc-region.h"
-void *
-gc_alloc_with_region(long nbytes,int page_type_flag, struct alloc_region *my_region,
-                     int quick_p);
-static inline void *
-gc_general_alloc(long nbytes, int page_type_flag, int quick_p)
-{
-    struct alloc_region *my_region;
-    if (UNBOXED_PAGE_FLAG == page_type_flag) {
-        my_region = &unboxed_region;
-    } else if (BOXED_PAGE_FLAG & page_type_flag) {
-        my_region = &boxed_region;
-    } else {
-        lose("bad page type flag: %d", page_type_flag);
-    }
-    return gc_alloc_with_region(nbytes, page_type_flag, my_region, quick_p);
-}
-#else
+#ifndef LISP_FEATURE_GENCGC
 extern void *gc_general_alloc(long nbytes,int page_type_flag,int quick_p);
 #endif
 

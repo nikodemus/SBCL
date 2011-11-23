@@ -38,6 +38,21 @@ extern void clear_auto_gc_trigger(void);
 
 extern boolean maybe_gc(os_context_t *context);
 
+extern boolean in_dynamic_space_p(os_vm_address_t addr);
+
 extern os_vm_size_t bytes_consed_between_gcs;
+
+/* This returns true for an address which exists within the lisp heap or on a thread
+ * stack. */
+extern boolean is_valid_lisp_addr(os_vm_address_t test);
+
+static inline boolean
+in_range_p(os_vm_address_t a, lispobj sbeg, size_t slen)
+{
+    char* beg = (char*) sbeg;
+    char* end = (char*) sbeg + slen;
+    char* adr = (char*) a;
+    return (adr >= beg && adr < end);
+}
 
 #endif /* _GC_H_ */
