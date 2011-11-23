@@ -43,14 +43,13 @@ os_validate(os_vm_address_t addr, os_vm_size_t len)
     actual = mmap(addr, len, OS_VM_PROT_ALL, flags, -1, 0);
 
     if (actual == MAP_FAILED) {
-        perror("mmap");
-        lose("os_validate(): mmap() failure\n");
+        return NULL;
     }
 
     if (addr && (addr!=actual)) {
-        fprintf(stderr, "mmap: wanted %lu bytes at %p, actually mapped at %p\n",
-                (unsigned long) len, addr, actual);
-        return 0;
+        munmap(actual, len);
+        errno=ENOMEM;
+        return NULL;
     }
 
     return actual;
@@ -61,7 +60,6 @@ os_invalidate(os_vm_address_t addr, os_vm_size_t len)
 {
     if (munmap(addr,len) == -1) {
         perror("munmap");
-        lose("os_invalidate(): mmap() failure\n");
     }
 }
 
