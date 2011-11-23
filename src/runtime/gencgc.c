@@ -64,6 +64,8 @@ page_index_t  gc_find_freeish_pages(page_index_t *restart_page_ptr, long nbytes,
 /*
  * GC parameters
  */
+os_vm_size_t dynamic_space_limit = DEFAULT_DYNAMIC_SPACE_SIZE;
+os_vm_size_t dynamic_space_reserve = 1*1024*1024;
 
 /* Generations 0-5 are normal collected generations, 6 is only used as
  * scratch space by the collector, and should never get collected.
@@ -269,9 +271,19 @@ void_diff(void *x, void *y)
     return (pointer_sized_uint_t)x - (pointer_sized_uint_t)y;
 }
 
+extern os_vm_size_t dynamic_space_holes = 0;
+os_vm_size_t dynamic_space_size(void)
+{
+    return dynamic_space_total_size - dynamic_space_holes;
+}
+
 boolean in_dynamic_space_p(os_vm_address_t addr)
 {
-  return in_range_p(addr, DYNAMIC_SPACE_START, dynamic_space_size);
+    page_index_t page = find_page_index(addr);
+    if (page>=0)
+        return page_allocated_p(page);
+    else
+        return 0;
 }
 
 /* a structure to hold the state of a generation
@@ -524,7 +536,7 @@ write_generation_stats(FILE *file)
                 generation_average_age(i));
     }
     fprintf(file,"   Total bytes allocated    = %"OS_VM_SIZE_FMT"\n", bytes_allocated);
-    fprintf(file,"   Dynamic-space-size bytes = %"OS_VM_SIZE_FMT"\n", dynamic_space_size);
+    fprintf(file,"   Dynamic-space-size bytes = %"OS_VM_SIZE_FMT"\n", dynamic_space_size());
 
     fpu_restore(fpu_state);
 }
@@ -614,7 +626,7 @@ void zero_pages_with_mmap(page_index_t start, page_index_t end) {
     gc_assert((length % gencgc_release_granularity) == 0);
 
     os_invalidate(addr, length);
-    new_addr = os_validate(addr, length);
+    new_addr = os_validate(addr, length, 1);
     if (new_addr == NULL || new_addr != addr) {
         lose("remap_free_pages: page moved, 0x%08x ==> 0x%08x",
              start, new_addr);
@@ -1272,6 +1284,125 @@ gc_heap_exhausted_error_or_lose (long available, long requested)
     }
 }
 
+static void
+note_heap_extension(long extension, boolean from_reserve)
+{
+    struct thread *thread = arch_os_get_current_thread();
+    lispobj heap_extension, symbol;
+    if (from_reserve) {
+        symbol = RESERVE_HEAP_USE;
+    } else if (dynamic_space_size() > dynamic_space_limit) {
+        symbol = HEAP_EXTENSION;
+    } else {
+        return;
+    }
+
+    heap_extension = SymbolValue(symbol, thread);
+    SetSymbolValue(symbol, heap_extension + make_fixnum(extension), thread);
+
+    if (!heap_extension)
+        kill_safely(arch_os_get_current_thread()->os_thread, SIGPIPE);
+}
+
+static page_index_t
+try_free_reserve_pages(long nbytes)
+{
+    page_index_t page;
+    if (page_table_reserved_pages) {
+        long extension = CEILING(nbytes, GENCGC_CARD_BYTES);
+        page_index_t extension_pages = extension/GENCGC_CARD_BYTES;
+        if (page_table_reserved_pages >= extension_pages) {
+            page_index_t first_reserve_page
+                = page_table_pages - page_table_reserved_pages;
+            page_index_t last_reserve_page
+                = first_reserve_page + extension_pages;
+            for (page = first_reserve_page;
+                 page < last_reserve_page;
+                 page++) {
+                gc_assert(page_reserved_ours_p(page));
+                page_table[page].allocated = FREE_PAGE_FLAG;
+            }
+            page_table_reserved_pages -= extension_pages;
+            dynamic_space_reserve -= extension;
+            note_heap_extension(extension, 1);
+            return first_reserve_page;
+        }
+    }
+    return 0;
+}
+
+static page_index_t
+try_grow_page_table(void *start, long nbytes)
+{
+    void *new_dynamic_space_end = start + nbytes;
+    os_vm_size_t new_dynamic_space_size = new_dynamic_space_end - (void *)DYNAMIC_SPACE_START;
+    os_vm_size_t new_page_table_pages = new_dynamic_space_size/GENCGC_CARD_BYTES;
+    /* We use calloc and memcpy instead of realloc, because zero-fill is the
+     * correct initialization for the table and I'm lazy. */
+    struct page *new_page_table = calloc(new_page_table_pages, sizeof(struct page));
+    if (new_page_table) {
+        struct page *old_page_table;
+        page_index_t page, old_page_table_pages;
+        memcpy(new_page_table, page_table, page_table_pages*sizeof(struct page));
+        old_page_table = page_table;
+        old_page_table_pages = page_table_pages;
+        page_table = new_page_table;
+        page_table_pages = new_page_table_pages;
+        free(old_page_table);
+        /* Mark holes. */
+        for (page = old_page_table_pages;
+             page < find_page_index(start);
+             page++) {
+            page_table[page].allocated = RESERVED_PAGE_FLAG;
+            page_table[page].dont_move = 1;
+        }
+        dynamic_space_total_size = new_dynamic_space_size;
+        note_heap_extension(nbytes, 0);
+        return find_page_index(start);
+    }
+    return 0;
+}
+
+static int hole_pages_limit = 2048;
+
+static page_index_t
+try_grow_heap(long nbytes)
+{
+    os_vm_address_t target, addr;
+    /* Don't bother with anything under 128 pages if we can get that much.
+     */
+    int nskip, npages = 128;
+    os_vm_address_t start, target, addr = NULL;
+    long extension;
+
+    /* First try to get more space directly after existing space.
+     */
+    start = target = dynamic_space_total_size + (void*)DYNAMIC_SPACE_START;
+    do {
+        extension = CEILING(nbytes, npages*GENCGC_CARD_BYTES);
+        npages--;
+        addr = os_validate(target, extension, 0);
+    } while ((addr < target) && npages);
+    /* If that didn't work, probe upwards by page increments.
+     */
+    if (addr < target)
+        for (nskip=1; nskip<hole_pages_limit; nskip++) {
+            target += nskip*GENCGC_CARD_BYTES;
+            if (target <= (addr = os_validate(target, extension, 0)))
+                break;
+        }
+
+    if (!addr)
+        return 0;
+
+    dynamic_space_holes += addr - start;
+
+    gc_assert(addr >= target);
+    gc_assert(extension >= nbytes);
+
+    return try_grow_page_table(addr, extension);
+}
+
 static page_index_t gencgc_alloc_start_page = -1;
 
 page_index_t
@@ -1359,33 +1490,9 @@ gc_find_freeish_pages(page_index_t *restart_page_ptr, long bytes,
     /* Check for a failure */
     if (bytes_found < nbytes) {
         gc_assert(restart_page >= page_table_pages);
-        /* Open up some of the reserve. */
-        if (page_table_reserved_pages) {
-            long extension = CEILING(nbytes, GENCGC_CARD_BYTES);
-            page_index_t extension_pages = extension/GENCGC_CARD_BYTES;
-            if (page_table_reserved_pages >= extension_pages) {
-                page_index_t first_reserve_page
-                    = page_table_pages - page_table_reserved_pages;
-                page_index_t last_reserve_page
-                    = first_reserve_page + extension_pages;
-                struct thread *thread = arch_os_get_current_thread();
-                lispobj heap_extension;
-                for (first_page = first_reserve_page;
-                     first_page < last_reserve_page;
-                     first_page++) {
-                    gc_assert(page_reserved_ours_p(first_page));
-                    page_table[first_page].allocated = FREE_PAGE_FLAG;
-                }
-                page_table_reserved_pages -= extension_pages;
-                restart_page = first_reserve_page;
-                heap_extension = SymbolValue(HEAP_EXTENSION, thread);
-                SetSymbolValue(HEAP_EXTENSION,
-                               heap_extension + make_fixnum(extension),
-                               thread);
-                if (!heap_extension)
-                    kill_safely(arch_os_get_current_thread()->os_thread, SIGPIPE);
-                goto restart;
-            }
+        if ((restart_page = try_grow_heap(nbytes)) ||
+            (restart_page = try_free_reserve_pages(nbytes))) {
+            goto restart;
         }
         gc_heap_exhausted_error_or_lose(most_bytes_found, nbytes);
     }
@@ -4014,16 +4121,17 @@ gc_init(void)
 
     /* Compute the number of pages needed for the dynamic space.
      * Dynamic space size should be aligned on page size. */
-    page_table_pages = dynamic_space_size/GENCGC_CARD_BYTES;
-    gc_assert(dynamic_space_size == npage_bytes(page_table_pages));
+    page_table_pages = dynamic_space_total_size/GENCGC_CARD_BYTES;
+    gc_assert(dynamic_space_total_size == npage_bytes(page_table_pages));
+    gc_assert(dynamic_space_holes == 0);
 
-    /* Reserve half the heap: this guarantees that we get at least one
-     * storage condition before the GC can fail. */
-    page_table_reserved_pages = page_table_pages/2;
+    /* Reserve part the heap: this is our space of last resort, should
+     * we fail to allocate any more. */
+    page_table_reserved_pages = dynamic_space_reserve/GENCGC_CARD_BYTES;
 
     /* Default nursery size to 5% of the total dynamic space size,
      * min 1Mb. */
-    bytes_consed_between_gcs = dynamic_space_size/(os_vm_size_t)20;
+    bytes_consed_between_gcs = dynamic_space_total_size/(os_vm_size_t)20;
     if (bytes_consed_between_gcs < (1024*1024))
         bytes_consed_between_gcs = 1024*1024;
 

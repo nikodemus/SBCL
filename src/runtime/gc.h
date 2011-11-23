@@ -42,6 +42,8 @@ extern boolean maybe_gc(os_context_t *context);
 
 extern boolean in_dynamic_space_p(os_vm_address_t addr);
 
+extern os_vm_size_t dynamic_space_size(void);
+
 extern os_vm_size_t bytes_consed_between_gcs;
 
 /* This returns true for an address which exists within the lisp heap or on a thread

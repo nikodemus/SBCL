@@ -109,11 +109,11 @@ os_context_sigmask_addr(os_context_t *context)
 }
 
 os_vm_address_t
-os_validate(os_vm_address_t addr, os_vm_size_t len)
+os_validate(os_vm_address_t addr, os_vm_size_t len, boolean fixed)
 {
     int flags = MAP_PRIVATE | MAP_ANON;
 
-    if (addr)
+    if (addr && fixed)
         flags |= MAP_FIXED;
 
     addr = mmap(addr, len, OS_VM_PROT_ALL, flags, -1, 0);
@@ -494,7 +494,7 @@ The system may fail to start.\n",
      * be able to allocate enough memory.
      */
     getrlimit (RLIMIT_DATA, &rl);
-    if (dynamic_space_size + READ_ONLY_SPACE_SIZE + STATIC_SPACE_SIZE +
+    if (dynamic_space_total_size + READ_ONLY_SPACE_SIZE + STATIC_SPACE_SIZE +
         LINKAGE_TABLE_SPACE_SIZE + wantfree > rl.rlim_cur)
         fprintf (stderr,
                  "RUNTIME WARNING: data size resource limit may be too low,\n"

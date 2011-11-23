@@ -225,8 +225,8 @@ void signal_emulation_wrapper(x86_thread_state64_t *thread_state,
     darwin_ucontext  *context;
     darwin_mcontext *regs;
 
-    context = (darwin_ucontext *) os_validate(0, sizeof(darwin_ucontext));
-    regs = (darwin_mcontext*) os_validate(0, sizeof(darwin_mcontext));
+    context = (darwin_ucontext *) os_allocate(sizeof(darwin_ucontext));
+    regs = (darwin_mcontext*) os_allocate(sizeof(darwin_mcontext));
     context->uc_mcontext = regs;
 
     /* when BSD signals are fired, they mask they signals in sa_mask
@@ -245,8 +245,8 @@ void signal_emulation_wrapper(x86_thread_state64_t *thread_state,
 
     update_thread_state_from_context(thread_state, float_state, context);
 
-    os_invalidate((os_vm_address_t)context, sizeof(darwin_ucontext));
-    os_invalidate((os_vm_address_t)regs, sizeof(darwin_mcontext));
+    os_deallocate((os_vm_address_t)context, sizeof(darwin_ucontext));
+    os_deallocate((os_vm_address_t)regs, sizeof(darwin_mcontext));
 
     /* Trap to restore the signal context. */
     asm volatile (".quad 0xffffffffffff0b0f"

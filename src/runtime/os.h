@@ -71,7 +71,13 @@ extern void os_zero(os_vm_address_t addr, os_vm_size_t length);
 /* our interface to mmap(2) or equivalent
  *
  * Tries to map len bytes of memory, starting from addr. If addr is
- * NULL, just tries to map anywhere. Mapped memory is zero-filled.
+ * NULL, just tries to map anywhere. If fixed is true, the address
+ * is a strict requirement, if false, it is only considered a hint.
+ * Mapped memory is zero-filled.
+ *
+ * Note: using fixed=1 after user code has run is inherently dangerous
+ * as on some systems this can cause pre-existing mappings in range
+ * to be discarded.
  *
  * On success, returns the address.
  * On failure, return 0 and sets errno.
@@ -79,7 +85,7 @@ extern void os_zero(os_vm_address_t addr, os_vm_size_t length);
  * If we specified an address but the mapping happened elsewhere,
  * we use errno=ENOMEM.
  */
-extern os_vm_address_t os_validate(os_vm_address_t addr, os_vm_size_t len);
+extern os_vm_address_t os_validate(os_vm_address_t addr, os_vm_size_t len, boolean fixed);
 
 /* our interface to munmap(2) or equivalent
  *

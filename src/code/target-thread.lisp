@@ -1367,18 +1367,20 @@ change."
 ;;; Called from the signal handler.
 #!-win32
 (defun run-interruption ()
-  (unless (eql 0 sb!vm:*heap-extension*)
+  (unless (and (eql 0 sb!vm:*heap-extension*)
+               (eql 0 sb!vm:*reserve-heap-use*))
     (let (cont)
       (unwind-protect
-           (let ((c (make-condition
-                     'simple-storage-condition
-                     :format-control "Heap extended into reserve area by ~S bytes."
-                     :format-arguments (list '?)))
-                 (ext sb!vm:*heap-extension*))
+           (let ((c (make-condition 'heap-extended))
+                 (ext sb!vm:*heap-extension*)
+                 (res sb!vm:*reserve-heap-use*))
+             ;; KLUDGE: We assume this SETF doesn't cons.
              (setf sb!vm:*heap-extension* 0
-                   (car (simple-condition-format-arguments c)) ext)
+                   sb!vm:*reserve-heap-use* 0
+                   (heap-extended-bytes c) ext
+                   (heap-extended-into-reserve-bytes c) res)
              (with-interrupts
-               (cerror "Continue" c))
+               (cerror "Continue." c))
              (setf cont t))
         (when (and (not cont) (thread-interruptions *current-thread*))
           (kill-safely (thread-os-thread *current-thread*) sb!unix:sigpipe)))))

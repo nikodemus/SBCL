@@ -34,11 +34,13 @@ os_init(char *argv[], char *envp[])
 }
 
 os_vm_address_t
-os_validate(os_vm_address_t addr, os_vm_size_t len)
+os_validate(os_vm_address_t addr, os_vm_size_t len, boolean fixed)
 {
     os_vm_address_t actual;
     int flags = MAP_PRIVATE | MAP_ANONYMOUS;
-    if (addr) flags |= MAP_FIXED;
+
+    if (addr && fixed)
+      flags |= MAP_FIXED;
 
     actual = mmap(addr, len, OS_VM_PROT_ALL, flags, -1, 0);
 
@@ -46,7 +48,7 @@ os_validate(os_vm_address_t addr, os_vm_size_t len)
         return NULL;
     }
 
-    if (addr && (addr!=actual)) {
+    if (addr && fixed && (addr!=actual)) {
         munmap(actual, len);
         errno=ENOMEM;
         return NULL;

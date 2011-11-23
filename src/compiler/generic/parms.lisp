@@ -62,7 +62,9 @@
     ;; bignums.  -- WHN 2000-10-02
     *read-only-space-free-pointer*
     *static-space-free-pointer*
-    *heap-extension*
+
+    #!+gencgc *heap-extension*
+    #!+gencgc *reserve-heap-use*
 
     ;; things needed for non-local-exit
     *current-catch-block*

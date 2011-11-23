@@ -52,7 +52,7 @@
 #endif
 #endif
 
-os_vm_size_t dynamic_space_size = DEFAULT_DYNAMIC_SPACE_SIZE;
+os_vm_size_t dynamic_space_total_size = DEFAULT_DYNAMIC_SPACE_SIZE;
 os_vm_size_t thread_control_stack_size = DEFAULT_CONTROL_STACK_SIZE;
 
 inline static boolean

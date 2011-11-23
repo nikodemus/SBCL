@@ -174,10 +174,21 @@ statistics are appended to it."
     (let ((val %gc-logfile))
       (when val
         (native-pathname (cast val c-string)))))
-  (declaim (inline dynamic-space-size))
-  (defun dynamic-space-size ()
-    "Size of the dynamic space in bytes."
-    (sb!alien:extern-alien "dynamic_space_size" os-vm-size-t)))
+  (define-alien-routine dynamic-space-size os-vm-size-t)
+  (setf (fdocumentation 'dynamic-space-size 'function)
+        "Size of the dynamic space in bytes.")
+  (defun dynamic-space-limit ()
+    "Size in bytes, beyond which dynamic space expansion results in an
+a storage condition. Can be set using SETF."
+    (sb!alien:extern-alien "dynamic_space_limit" os-vm-size-t))
+  (defun (setf dynamic-space-limit) (limit)
+    (setf (sb!alien:extern-alien "dynamic_space_limit" os-vm-size-t) limit))
+  (defun dynamic-space-reserve ()
+    "Size of the dynamic space reserve area in bytes. This is
+pre-allocated memory used only as a last resort when heap is otherwise
+exhaused and cannot be further extended. Using any part of dynamic
+space reserve area always results in a storage condition."
+    (sb!alien:extern-alien "dynamic_space_reserve" os-vm-size-t)))
 
 ;;;; SUB-GC
 

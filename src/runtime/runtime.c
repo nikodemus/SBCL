@@ -395,7 +395,7 @@ main(int argc, char *argv[], char *envp[])
     /* Parse our part of the command line (aka "runtime options"),
      * stripping out those options that we handle. */
     if (runtime_options != NULL) {
-        dynamic_space_size = runtime_options->dynamic_space_size;
+        dynamic_space_total_size = runtime_options->dynamic_space_size;
         thread_control_stack_size = runtime_options->thread_control_stack_size;
         sbcl_argv = argv;
     } else {
@@ -443,15 +443,27 @@ main(int argc, char *argv[], char *envp[])
                 ++argi;
                 if (argi >= argc)
                     lose("missing argument for --dynamic-space-size");
-                  dynamic_space_size = parse_size_arg(argv[argi++], "--dynamic-space-size");
+                dynamic_space_total_size = parse_size_arg(argv[argi++], "--dynamic-space-size");
 #               ifdef MAX_DYNAMIC_SPACE_END
                 if (!((DYNAMIC_SPACE_START <
-                       DYNAMIC_SPACE_START+dynamic_space_size) &&
-                      (DYNAMIC_SPACE_START+dynamic_space_size <=
+                       DYNAMIC_SPACE_START+dynamic_space_total_size) &&
+                      (DYNAMIC_SPACE_START+dynamic_space_total_size <=
                        MAX_DYNAMIC_SPACE_END)))
                   lose("--dynamic-space-size argument %s is too large, max %ldMiB",
                        argv[argi-1], MAX_DYNAMIC_SPACE_END-DYNAMIC_SPACE_START);
 #               endif
+# ifdef LISP_FEATURE_GENCGC
+            } else if (0 == strcmp(arg, "--dynamic-space-reserve")) {
+                ++argi;
+                if (argi >= argc)
+                    lose("missing argument for --dynamic-space-reserve");
+                dynamic_space_reserve = parse_size_arg(argv[argi++], "--dynamic-space-reserve");
+            } else if (0 == strcmp(arg, "--dynamic-space-limit")) {
+                ++argi;
+                if (argi >= argc)
+                    lose("missing argument for --dynamic-space-limit");
+                dynamic_space_limit = parse_size_arg(argv[argi++], "--dynamic-space-limit");
+# endif
             } else if (0 == strcmp(arg, "--control-stack-size")) {
                 ++argi;
                 if (argi >= argc)
@@ -528,14 +540,18 @@ main(int argc, char *argv[], char *envp[])
 
     /* Align down to multiple of page_table page size, and to the appropriate
      * stack alignment. */
-    dynamic_space_size &= ~(PAGE_BYTES-1);
+    dynamic_space_total_size &= ~(PAGE_BYTES-1);
 #ifdef LISP_FEATURE_GENCGC
-    dynamic_space_size &= ~(GENCGC_CARD_BYTES-1);
+    dynamic_space_total_size &= ~(GENCGC_CARD_BYTES-1);
+    dynamic_space_reserve &= ~(PAGE_BYTES-1);
+    dynamic_space_reserve &= ~(GENCGC_CARD_BYTES-1);
+    dynamic_space_limit &= ~(PAGE_BYTES-1);
+    dynamic_space_limit &= ~(GENCGC_CARD_BYTES-1);
 #endif
     thread_control_stack_size &= ~(CONTROL_STACK_ALIGNMENT_BYTES-1);
 
     /* Preserve the runtime options for possible future core saving */
-    runtime_options->dynamic_space_size = dynamic_space_size;
+    runtime_options->dynamic_space_size = dynamic_space_total_size;
     runtime_options->thread_control_stack_size = thread_control_stack_size;
 
     /* KLUDGE: os_vm_page_size is set by os_init(), and on some

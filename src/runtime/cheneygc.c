@@ -63,8 +63,14 @@ tv_diff(struct timeval *x, struct timeval *y)
 
 boolean in_dynamic_space_p(os_vm_address_t addr)
 {
-    return (in_range_p(addr, DYNAMIC_0_SPACE_START, dynamic_space_size) ||
-            in_range_p(addr, DYNAMIC_1_SPACE_START, dynamic_space_size));
+    os_vm_size_t size = dynamic_space_total_size;
+    return (in_range_p(addr, DYNAMIC_0_SPACE_START, size) ||
+            in_range_p(addr, DYNAMIC_1_SPACE_START, size));
+}
+
+os_vm_size_t dynamic_space_size(void)
+{
+    return dynamic_space_total_size;
 }
 
 void *
@@ -223,7 +229,7 @@ collect_garbage(generation_index_t ignore)
     clear_auto_gc_trigger();
 #endif
     os_zero((os_vm_address_t) from_space,
-            (os_vm_size_t) dynamic_space_size);
+            (os_vm_size_t) dynamic_space_total_size);
 
     current_dynamic_space = new_space;
     dynamic_space_free_pointer = new_space_free_pointer;
@@ -443,7 +449,7 @@ void set_auto_gc_trigger(os_vm_size_t dynamic_usage)
              (unsigned long)((os_vm_address_t)dynamic_space_free_pointer
                              - (os_vm_address_t)current_dynamic_space));
 
-    length = os_trunc_size_to_page(dynamic_space_size - dynamic_usage);
+    length = os_trunc_size_to_page(dynamic_space_total_size - dynamic_usage);
     if (length < 0)
         lose("set_auto_gc_trigger: tried to set gc trigger too high! (0x%08lx)\n",
              (unsigned long)dynamic_usage);
@@ -466,11 +472,11 @@ void clear_auto_gc_trigger(void)
         return;
 
     addr = (os_vm_address_t)current_auto_gc_trigger;
-    length = dynamic_space_size + (os_vm_address_t)current_dynamic_space - addr;
+    length = dynamic_space_total_size + (os_vm_address_t)current_dynamic_space - addr;
 
 #if defined(SUNOS) || defined(SOLARIS) || defined(LISP_FEATURE_HPUX)
     /* don't want to force whole space into swapping mode... */
-    os_validate(addr, length);
+    os_validate(addr, length, 1);
 #else
     os_protect(addr, length, OS_VM_PROT_ALL);
 #endif
@@ -485,7 +491,7 @@ gc_trigger_hit(void *addr)
         return 0;
     else{
         return (addr >= (void *)current_auto_gc_trigger &&
-                addr <((void *)current_dynamic_space + dynamic_space_size));
+                addr <((void *)current_dynamic_space() + dynamic_space_total_size));
     }
 }
 

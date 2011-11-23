@@ -32,7 +32,7 @@ extern int foreign_function_call_active;
     foreign_function_call_active
 #endif
 
-extern os_vm_size_t dynamic_space_size;
+extern os_vm_size_t dynamic_space_total_size;
 extern os_vm_size_t thread_control_stack_size;
 
 extern struct runtime_options *runtime_options;
@@ -71,6 +71,9 @@ extern lispobj *dynamic_space_free_pointer;
 
 # ifndef LISP_FEATURE_GENCGC
 extern lispobj *current_auto_gc_trigger;
+# else
+extern os_vm_size_t dynamic_space_reserve;
+extern os_vm_size_t dynamic_space_limit;
 # endif
 
 extern lispobj *current_dynamic_space;

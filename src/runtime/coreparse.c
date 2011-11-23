@@ -326,11 +326,11 @@ process_directory(int fd, lispobj *ptr, int count, os_vm_offset_t file_offset)
 
         switch (id) {
         case DYNAMIC_CORE_SPACE_ID:
-            if (len > dynamic_space_size) {
+            if (len > dynamic_space_size()) {
                 fprintf(stderr,
                         "dynamic space too small for core: %ldKiB required, %ldKiB available.\n",
                         len >> 10,
-                        (long)dynamic_space_size >> 10);
+                        (long)dynamic_space_size() >> 10);
                 exit(1);
             }
 #ifdef LISP_FEATURE_GENCGC

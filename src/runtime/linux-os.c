@@ -309,7 +309,7 @@ static void * under_2gb_free_pointer=DYNAMIC_1_SPACE_END;
 #endif
 
 os_vm_address_t
-os_validate(os_vm_address_t addr, os_vm_size_t len)
+os_validate(os_vm_address_t addr, os_vm_size_t len, boolean fixed)
 {
     int flags =  MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
     os_vm_address_t actual;
@@ -324,7 +324,7 @@ os_validate(os_vm_address_t addr, os_vm_size_t len)
     if (actual == MAP_FAILED) {
         return NULL;
     }
-    if (addr && (addr!=actual)) {
+    if (addr && fixed && (addr!=actual)) {
         munmap(actual, len);
         errno=ENOMEM;
         return NULL;

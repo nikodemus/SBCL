@@ -140,8 +140,9 @@ void os_init(char *argv[], char *envp[])
  * the memory as reserved (since we do lazy commits).
  */
 
+/* FIXME: fixed arg */
 os_vm_address_t
-os_validate(os_vm_address_t addr, os_vm_size_t len)
+os_validate(os_vm_address_t addr, os_vm_size_t len, boolean fixed)
 {
     MEMORY_BASIC_INFORMATION mem_info;
 

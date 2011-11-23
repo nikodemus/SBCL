@@ -186,6 +186,41 @@ PROCEED WITH CAUTION."))))
 
 PROCEED WITH CAUTION."))))
 
+(define-condition heap-extended (storage-condition)
+  ((bytes
+    :initarg :bytes
+    :initform 0
+    :accessor heap-extended-bytes)
+   (reserve-bytes
+    :initarg :reserve-bytes
+    :initform 0
+    :accessor heap-extended-into-reserve-bytes))
+  (:report
+   (lambda (condition stream)
+     (let ((ext (heap-extended-bytes condition))
+           (res (heap-extended-into-reserve-bytes condition)))
+       (cond ((eql 0 ext)
+              (format stream "~@<Could not grow heap. Heap extended into ~
+                              reserve area by ~:D bytes, ~:D bytes of reserve ~
+                              area left.~:@>"
+                      res (dynamic-space-reserve)))
+             ((eql 0 res)
+              (format stream  "~@<Heap extended by ~:D bytes, past the ~
+                               dynamic-space-limit (~:D bytes). New dynamic-space-size ~
+                               is ~:D bytes.~:@>"
+                      ext
+                      (dynamic-space-limit)
+                      (dynamic-space-size)))
+             (t
+              (format stream  "~@<Heap extended by ~:D bytes, past the ~
+                               dynamic-space-limit. Subsequent allocation needed more ~
+                               space, but could not grow heap. Heap extended into ~
+                               reserve area by ~:D bytes, ~:D bytes of reserve ~
+                               area left.~:@>"
+                      ext
+                      res
+                      (dynamic-space-reserve))))))))
+
 (define-condition heap-exhausted-error (storage-condition)
   ()
   (:report
