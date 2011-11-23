@@ -638,6 +638,7 @@ like *STACK-TOP-HINT* and unsupported stuff like *TRACED-FUN-LIST*."
                "GENERATION-NUMBER-OF-GCS-BEFORE-PROMOTION"
                "GC-LOGFILE"
                "DYNAMIC-SPACE-LIMIT"
+               "DYNAMIC-SPACE-HARD-LIMIT"
                "DYNAMIC-SPACE-RESERVE"
 
                ;; Stack allocation control

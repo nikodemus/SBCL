@@ -182,7 +182,17 @@ statistics are appended to it."
 a storage condition. Can be set using SETF."
     (sb!alien:extern-alien "dynamic_space_limit" os-vm-size-t))
   (defun (setf dynamic-space-limit) (limit)
-    (setf (sb!alien:extern-alien "dynamic_space_limit" os-vm-size-t) limit))
+    (if (> limit (dynamic-space-hard-limit))
+        (error "Cannot set dynamic-space-limit above dynamic-space-hard-limit.")
+        (setf (sb!alien:extern-alien "dynamic_space_limit" os-vm-size-t) limit)))
+  (defun dynamic-space-hard-limit ()
+    "Size in bytes, beyond which dynamic space expansion is prohibited.
+Can be set using SETF."
+    (sb!alien:extern-alien "dynamic_space_hard_limit" os-vm-size-t))
+  (defun (setf dynamic-space-hard-limit) (limit)
+    (if (< limit (dynamic-space-limit))
+        (error "Cannot set dynamic-space-hard-limit below dynamic-space-limit.")
+        (setf (sb!alien:extern-alien "dynamic_space_hard_limit" os-vm-size-t) limit)))
   (defun dynamic-space-reserve ()
     "Size of the dynamic space reserve area in bytes. This is
 pre-allocated memory used only as a last resort when heap is otherwise

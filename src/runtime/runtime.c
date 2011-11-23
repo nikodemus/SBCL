@@ -462,7 +462,12 @@ main(int argc, char *argv[], char *envp[])
                 ++argi;
                 if (argi >= argc)
                     lose("missing argument for --dynamic-space-limit");
-                dynamic_space_limit = parse_size_arg(argv[argi++], "--dynamic-space-limit");
+                dynamic_space_limit = parse_size_arg(argv[argi++], "--dynamic-space-hard-limit");
+            } else if (0 == strcmp(arg, "--dynamic-space-hard-limit")) {
+                ++argi;
+                if (argi >= argc)
+                    lose("missing argument for --dynamic-space-hard-limit");
+                dynamic_space_hard_limit = parse_size_arg(argv[argi++], "--dynamic-space-limit");
 # endif
             } else if (0 == strcmp(arg, "--control-stack-size")) {
                 ++argi;

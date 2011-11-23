@@ -74,6 +74,7 @@ extern lispobj *current_auto_gc_trigger;
 # else
 extern os_vm_size_t dynamic_space_reserve;
 extern os_vm_size_t dynamic_space_limit;
+extern os_vm_size_t dynamic_space_hard_limit;
 # endif
 
 extern lispobj *current_dynamic_space;
