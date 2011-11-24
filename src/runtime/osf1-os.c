@@ -59,10 +59,10 @@ os_init(char *argv[], char *envp[])
 
 
 os_vm_address_t
-os_validate(os_vm_address_t addr, os_vm_size_t len)
+os_validate(os_vm_address_t addr, os_vm_size_t len, boolean fixedp)
 {
     int flags = MAP_PRIVATE|MAP_ANONYMOUS;
-    if (addr) flags |= MAP_FIXED;
+    if (addr && fixedp) flags |= MAP_FIXED;
     else  flags |= MAP_VARIABLE;
 
     if((addr=mmap(addr,len,OS_VM_PROT_ALL,flags,-1,0)) == (os_vm_address_t) -1)

@@ -109,11 +109,11 @@ os_context_sigmask_addr(os_context_t *context)
 }
 
 os_vm_address_t
-os_validate(os_vm_address_t addr, os_vm_size_t len)
+os_validate(os_vm_address_t addr, os_vm_size_t len, boolean fixedp)
 {
     int flags = MAP_PRIVATE | MAP_ANON;
 
-    if (addr)
+    if (addr && fixedp)
         flags |= MAP_FIXED;
 
     addr = mmap(addr, len, OS_VM_PROT_ALL, flags, -1, 0);

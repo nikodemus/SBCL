@@ -373,7 +373,7 @@ create_thread_struct(lispobj initial_function) {
      * on the alignment passed from os_validate, since that might
      * assume the current (e.g. 4k) pagesize, while we calculate with
      * the biggest (e.g. 64k) pagesize allowed by the ABI. */
-    spaces=os_validate(0, THREAD_STRUCT_SIZE);
+    spaces=os_allocate(THREAD_STRUCT_SIZE);
     if(!spaces)
         return NULL;
     /* Aligning up is safe as THREAD_STRUCT_SIZE has
@@ -495,7 +495,7 @@ create_thread_struct(lispobj initial_function) {
 #endif
 
     th->interrupt_data = (struct interrupt_data *)
-        os_validate(0,(sizeof (struct interrupt_data)));
+        os_allocate((sizeof (struct interrupt_data)));
     if (!th->interrupt_data) {
         free_thread_struct(th);
         return 0;

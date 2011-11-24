@@ -141,7 +141,7 @@ void os_init(char *argv[], char *envp[])
  */
 
 os_vm_address_t
-os_validate(os_vm_address_t addr, os_vm_size_t len)
+os_validate(os_vm_address_t addr, os_vm_size_t len, boolean fixedp)
 {
     MEMORY_BASIC_INFORMATION mem_info;
 
@@ -185,7 +185,9 @@ os_validate(os_vm_address_t addr, os_vm_size_t len)
 
     if (!VirtualAlloc(addr, len, (mem_info.State == MEM_RESERVE)? MEM_COMMIT: MEM_RESERVE, PAGE_EXECUTE_READWRITE)) {
         fprintf(stderr, "VirtualAlloc: 0x%lx.\n", GetLastError());
-        return 0;
+        if (fixedp)
+            return 0;
+        return os_validate(0, len, 0);
     }
 
     return addr;
