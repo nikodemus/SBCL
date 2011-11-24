@@ -57,7 +57,7 @@
 #endif
 
 /* forward declarations */
-page_index_t  gc_find_freeish_pages(long *restart_page_ptr, long nbytes,
+page_index_t  gc_find_freeish_pages(page_index_t *restart_page_ptr, long nbytes,
                                     int page_type_flag);
 
 
@@ -246,7 +246,7 @@ find_page_index(void *addr)
 }
 
 static size_t
-npage_bytes(long npages)
+npage_bytes(page_index_t npages)
 {
     gc_assert(npages>=0);
     return ((unsigned long)npages)*GENCGC_CARD_BYTES;
@@ -363,11 +363,10 @@ unsigned long gencgc_alloc_granularity = GENCGC_ALLOC_GRANULARITY;
 
 /* Count the number of pages which are write-protected within the
  * given generation. */
-static long
+static page_index_t
 count_write_protect_generation_pages(generation_index_t generation)
 {
-    page_index_t i;
-    unsigned long count = 0;
+    page_index_t i, count = 0;
 
     for (i = 0; i < last_free_page; i++)
         if (page_allocated_p(i)
@@ -378,11 +377,11 @@ count_write_protect_generation_pages(generation_index_t generation)
 }
 
 /* Count the number of pages within the given generation. */
-static long
+static page_index_t
 count_generation_pages(generation_index_t generation)
 {
     page_index_t i;
-    long count = 0;
+    page_index_t count = 0;
 
     for (i = 0; i < last_free_page; i++)
         if (page_allocated_p(i)
@@ -392,11 +391,11 @@ count_generation_pages(generation_index_t generation)
 }
 
 #if QSHOW
-static long
+static page_index_t
 count_dont_move_pages(void)
 {
     page_index_t i;
-    long count = 0;
+    page_index_t count = 0;
     for (i = 0; i < last_free_page; i++) {
         if (page_allocated_p(i)
             && (page_table[i].dont_move != 0)) {
