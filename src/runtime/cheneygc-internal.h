@@ -17,6 +17,8 @@ extern lispobj *from_space_free_pointer;
 extern lispobj *new_space;
 extern lispobj *new_space_free_pointer;
 
+extern void *dynamic_0_space_start;
+extern void *dynamic_1_space_start;
 
 /* predicates */
 /* #if defined(DEBUG_SPACE_PREDICATES) */

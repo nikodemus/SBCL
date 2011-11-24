@@ -115,27 +115,27 @@
 (progn
   #!+gencgc
   (progn
-    (def!constant dynamic-space-start #x4f000000)
-    (def!constant dynamic-space-end   (!configure-dynamic-space-end)))
+    (def!constant default-dynamic-space-start #x4f000000)
+    (def!constant default-dynamic-space-end   (!configure-dynamic-space-end)))
   #!-gencgc
   (progn
-    (def!constant dynamic-0-space-start #x4f000000)
-    (def!constant dynamic-0-space-end   #x66fff000)
-    (def!constant dynamic-1-space-start #x67000000)
-    (def!constant dynamic-1-space-end   #x7efff000)))
+    (def!constant default-dynamic-0-space-start #x4f000000)
+    (def!constant default-dynamic-0-space-end   #x66fff000)
+    (def!constant default-dynamic-1-space-start #x67000000)
+    (def!constant default-dynamic-1-space-end   #x7efff000)))
 
 #!+netbsd
 (progn
   #!+gencgc
   (progn
-    (def!constant dynamic-space-start #x4f000000)
-    (def!constant dynamic-space-end   (!configure-dynamic-space-end)))
+    (def!constant default-dynamic-space-start #x4f000000)
+    (def!constant default-dynamic-space-end   (!configure-dynamic-space-end)))
   #!-gencgc
   (progn
-    (def!constant dynamic-0-space-start #x4f000000)
-    (def!constant dynamic-0-space-end   #x66fff000)
-    (def!constant dynamic-1-space-start #x67000000)
-    (def!constant dynamic-1-space-end   #x7efff000)))
+    (def!constant default-dynamic-0-space-start #x4f000000)
+    (def!constant default-dynamic-0-space-end   #x66fff000)
+    (def!constant default-dynamic-1-space-start #x67000000)
+    (def!constant default-dynamic-1-space-end   #x7efff000)))
 
 ;;; Text and data segments start at #x01800000.  Range for randomized
 ;;; malloc() starts #x20000000 (MAXDSIZ) after end of data seg and
@@ -148,28 +148,28 @@
 (progn
   #!+gencgc
   (progn
-    (def!constant dynamic-space-start #x4f000000)
-    (def!constant dynamic-space-end   (!configure-dynamic-space-end)))
+    (def!constant default-dynamic-space-start #x4f000000)
+    (def!constant default-dynamic-space-end   (!configure-dynamic-space-end)))
   #!-gencgc
   (progn
-    (def!constant dynamic-0-space-start #x4f000000)
-    (def!constant dynamic-0-space-end   #x5cfff000)
-    (def!constant dynamic-1-space-start #x5f000000)
-    (def!constant dynamic-1-space-end   #x6cfff000)))
+    (def!constant default-dynamic-0-space-start #x4f000000)
+    (def!constant default-dynamic-0-space-end   #x5cfff000)
+    (def!constant default-dynamic-1-space-start #x5f000000)
+    (def!constant default-dynamic-1-space-end   #x6cfff000)))
 
 #!+darwin
 (progn
   #!+gencgc
   (progn
-    (def!constant dynamic-space-start #x10000000)
-    (def!constant dynamic-space-end   (!configure-dynamic-space-end)))
+    (def!constant default-dynamic-space-start #x10000000)
+    (def!constant default-dynamic-space-end   (!configure-dynamic-space-end)))
   #!-gencgc
   (progn
-    (def!constant dynamic-0-space-start #x10000000)
-    (def!constant dynamic-0-space-end   #x3ffff000)
+    (def!constant default-dynamic-0-space-start #x10000000)
+    (def!constant default-dynamic-0-space-end   #x3ffff000)
 
-    (def!constant dynamic-1-space-start #x40000000)
-    (def!constant dynamic-1-space-end   #x6ffff000)))
+    (def!constant default-dynamic-1-space-start #x40000000)
+    (def!constant default-dynamic-1-space-end   #x6ffff000)))
 
 ;;;; Other miscellaneous constants.
 

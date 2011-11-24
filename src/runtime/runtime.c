@@ -347,6 +347,22 @@ main(int argc, char *argv[], char *envp[])
     struct lisp_exception_frame exception_frame;
 #endif
 
+#ifndef LISP_FEATURE_WIN32
+    if (getenv("TEST_START")) {
+            long start = strtol(getenv("TEST_START"), 0, 16);
+            long end = strtol(getenv("TEST_END"), 0, 16);
+            printf("mapping from %lx to %lx\n", start, end);
+            if (mmap((void *) start,
+                     end - start,
+                     OS_VM_PROT_ALL,
+                     MAP_PRIVATE | MAP_ANON,
+                     -1,
+                     0)
+                == MAP_FAILED)
+                    exit(1);
+    }
+#endif
+
     /* the name of the core file we're to execute. Note that this is
      * a malloc'ed string which should be freed eventually. */
     char *core = 0;
@@ -443,15 +459,7 @@ main(int argc, char *argv[], char *envp[])
                 ++argi;
                 if (argi >= argc)
                     lose("missing argument for --dynamic-space-size");
-                  dynamic_space_size = parse_size_arg(argv[argi++], "--dynamic-space-size");
-#               ifdef MAX_DYNAMIC_SPACE_END
-                if (!((DYNAMIC_SPACE_START <
-                       DYNAMIC_SPACE_START+dynamic_space_size) &&
-                      (DYNAMIC_SPACE_START+dynamic_space_size <=
-                       MAX_DYNAMIC_SPACE_END)))
-                  lose("--dynamic-space-size argument %s is too large, max %ldMiB",
-                       argv[argi-1], MAX_DYNAMIC_SPACE_END-DYNAMIC_SPACE_START);
-#               endif
+                dynamic_space_size = parse_size_arg(argv[argi++], "--dynamic-space-size");
             } else if (0 == strcmp(arg, "--control-stack-size")) {
                 ++argi;
                 if (argi >= argc)
@@ -543,8 +551,8 @@ main(int argc, char *argv[], char *envp[])
      * it must follow os_init(). -- WHN 2000-01-26 */
     os_init(argv, envp);
     arch_init();
-    gc_init();
     validate();
+    gc_init();
 
     /* If no core file was specified, look for one. */
     if (!core) {

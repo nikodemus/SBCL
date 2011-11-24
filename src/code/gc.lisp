@@ -15,11 +15,10 @@
 
 #!-sb-fluid
 (declaim (inline current-dynamic-space-start))
-#!+gencgc
-(defun current-dynamic-space-start () sb!vm:dynamic-space-start)
-#!-gencgc
 (defun current-dynamic-space-start ()
-  (sb!alien:extern-alien "current_dynamic_space" sb!alien:unsigned-long))
+  (sb!alien:extern-alien #!-gencgc "current_dynamic_space"
+                         #!+gencgc "dynamic_space_start"
+                         os-vm-address-t))
 
 #!-sb-fluid
 (declaim (inline dynamic-usage))

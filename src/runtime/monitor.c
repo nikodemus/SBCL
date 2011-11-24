@@ -204,7 +204,7 @@ regs_cmd(char **ptr)
 #endif
 
 #ifdef LISP_FEATURE_GENCGC
-    /* printf("DYNAMIC\t=\t0x%08lx\n", DYNAMIC_SPACE_START); */
+    /* printf("DYNAMIC\t=\t0x%08lx\n", dynamic_space_start); */
 #else
     printf("STATIC\t=\t0x%08lx   ",
            (unsigned long)SymbolValue(STATIC_SPACE_FREE_POINTER, thread));

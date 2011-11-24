@@ -278,7 +278,7 @@ save_to_filehandle(FILE *file, char *filename, lispobj init_function,
 #ifdef LISP_FEATURE_GENCGC
     output_space(file,
                  DYNAMIC_CORE_SPACE_ID,
-                 (lispobj *)DYNAMIC_SPACE_START,
+                 (lispobj *)dynamic_space_start,
                  dynamic_space_free_pointer,
                  core_start_pos,
                  core_compression_level);
@@ -293,7 +293,7 @@ save_to_filehandle(FILE *file, char *filename, lispobj init_function,
 #else
     output_space(file,
                  DYNAMIC_CORE_SPACE_ID,
-                 (lispobj *)DYNAMIC_SPACE_START,
+                 (lispobj *)dynamic_space_start,
                  (lispobj *)SymbolValue(ALLOCATION_POINTER,0),
                  core_start_pos,
                  core_compression_level);

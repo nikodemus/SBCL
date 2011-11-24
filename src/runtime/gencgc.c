@@ -215,6 +215,7 @@ static inline boolean protect_page_p(page_index_t page, generation_index_t gener
 /* To map addresses to page structures the address of the first page
  * is needed. */
 static void *heap_base = NULL;
+void *dynamic_space_start = NULL;
 
 /* Calculate the start address for the given page number. */
 inline void *
@@ -272,6 +273,17 @@ boolean in_dynamic_space_p(os_vm_address_t addr)
  * definition in src/code/gc.lisp accordingly. ...or better yes,
  * deal with the FIXME there...
  */
+
+boolean
+gc_is_valid_lisp_addr(os_vm_address_t addr)
+{
+    size_t ad = (size_t) addr;
+    return ((size_t) dynamic_space_start <= ad
+            && ad < ((size_t) dynamic_space_start
+                     + DEFAULT_DYNAMIC_SPACE_SIZE));
+}
+
+/* a structure to hold the state of a generation */
 struct generation {
 
     /* the first page that gc_alloc() checks on its next call */
@@ -4089,7 +4101,7 @@ gc_init(void)
     scavtab[WEAK_POINTER_WIDETAG] = scav_weak_pointer;
     transother[SIMPLE_ARRAY_WIDETAG] = trans_boxed_large;
 
-    heap_base = (void*)DYNAMIC_SPACE_START;
+    heap_base = dynamic_space_start;
 
     /* The page structures are initialized implicitly when page_table
      * is allocated with "calloc" above. Formerly we had the following

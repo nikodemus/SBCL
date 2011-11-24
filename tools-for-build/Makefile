@@ -15,7 +15,11 @@ LDFLAGS:=$(LDFLAGS)
 LDLIBS:=$(OS_LIBS)
 
 all: grovel-headers determine-endianness where-is-mcontext \
-        modify-ldt-struct-name sigaction-sa-nodefer-works-test
+        modify-ldt-struct-name sigaction-sa-nodefer-works-test libreloctest.so
+
+libreloctest.so: libreloctest.c
+	gcc $(CPPFLAGS) -nostdlib -Wall -fPIC -shared -o libreloctest.so \
+		libreloctest.c
 
 clean:
 	rm -f *.o grovel-headers determine-endianness where-is-mcontext \

@@ -122,11 +122,11 @@
 (def!constant static-space-start    #x28000000)
 (def!constant static-space-end      #x2c000000)
 
-(def!constant dynamic-0-space-start   #x30000000)
-(def!constant dynamic-0-space-end     #x3fff0000)
+(def!constant default-dynamic-0-space-start #x30000000)
+(def!constant default-dynamic-0-space-end   #x3fff0000)
 
-(def!constant dynamic-1-space-start   #x40000000)
-(def!constant dynamic-1-space-end     #x4fff0000)
+(def!constant default-dynamic-1-space-start #x40000000)
+(def!constant default-dynamic-1-space-end   #x4fff0000)
 
 ;;; FIXME nothing refers to either of these in alpha or x86 cmucl
 ;;; backend, so they could probably be removed.

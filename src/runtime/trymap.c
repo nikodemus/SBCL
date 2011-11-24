@@ -50,7 +50,7 @@ main(int argc, char *argv[])
     addr = mmap(requested_addr,
                 hexparse(argv[2]),
                 0x7,
-                MAP_PRIVATE | MAP_ANON | MAP_FIXED,
+                MAP_PRIVATE | MAP_ANON,
                 -1,
                 0);
 

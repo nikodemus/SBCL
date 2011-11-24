@@ -44,6 +44,7 @@
 #include "validate.h"
 #include "gc-internal.h"
 #include "runtime-options.h"
+#include "relocate.h"
 
 #include <errno.h>
 
@@ -267,12 +268,15 @@ os_vm_address_t inflate_core_bytes(int fd, os_vm_offset_t offset,
 #endif
 
 int merge_core_pages = -1;
+/* KLUDGE */
+static os_vm_address_t old_dynamic_space_start;
 
 static void
 process_directory(int fd, lispobj *ptr, int count, os_vm_offset_t file_offset)
 {
     struct ndir_entry *entry;
     int compressed;
+    os_vm_size_t static_space_len = 0; /* see KLUDGE below */
 
     FSHOW((stderr, "/process_directory(..), count=%d\n", count));
 
@@ -284,11 +288,22 @@ process_directory(int fd, lispobj *ptr, int count, os_vm_offset_t file_offset)
                 compressed = 1;
             id &= ~(DEFLATED_CORE_SPACE_ID_FLAG);
         }
-        long offset = os_vm_page_size * (1 + entry->data_page);
+        os_vm_size_t offset = os_vm_page_size * (1 + entry->data_page);
         os_vm_address_t addr =
             (os_vm_address_t) (os_vm_page_size * entry->address);
-        lispobj *free_pointer = (lispobj *) addr + entry->nwords;
-        unsigned long len = os_vm_page_size * entry->page_count;
+        lispobj *free_pointer;
+        os_vm_size_t len = os_vm_page_size * entry->page_count;
+
+        if (id == DYNAMIC_CORE_SPACE_ID) {
+            old_dynamic_space_start = addr;
+#ifdef LISP_FEATURE_GENCGC
+            addr = dynamic_space_start;
+#else
+            if (addr != dynamic_1_space_start)
+                addr = dynamic_0_space_start;
+#endif
+        }
+
         if (len != 0) {
             os_vm_address_t real_addr;
             FSHOW((stderr, "/mapping %ld(0x%lx) bytes at 0x%lx\n",
@@ -313,6 +328,7 @@ process_directory(int fd, lispobj *ptr, int count, os_vm_offset_t file_offset)
                      addr);
             }
         }
+        free_pointer = (lispobj *) addr + entry->nwords;
 
 #ifdef MADV_MERGEABLE
         if ((merge_core_pages == 1)
@@ -333,22 +349,27 @@ process_directory(int fd, lispobj *ptr, int count, os_vm_offset_t file_offset)
                         (long)dynamic_space_size >> 10);
                 exit(1);
             }
-#ifdef LISP_FEATURE_GENCGC
-            if (addr != (os_vm_address_t)DYNAMIC_SPACE_START) {
-                fprintf(stderr, "in core: 0x%lx; in runtime: 0x%lx \n",
-                        (long)addr, (long)DYNAMIC_SPACE_START);
-                lose("core/runtime address mismatch: DYNAMIC_SPACE_START\n");
-            }
-#else
-            if ((addr != (os_vm_address_t)DYNAMIC_0_SPACE_START) &&
-                (addr != (os_vm_address_t)DYNAMIC_1_SPACE_START)) {
-                fprintf(stderr, "in core: 0x%lx; in runtime: 0x%lx or 0x%lx\n",
-                        (long)addr,
-                        (long)DYNAMIC_0_SPACE_START,
-                        (long)DYNAMIC_1_SPACE_START);
-                lose("warning: core/runtime address mismatch: DYNAMIC_SPACE_START\n");
-            }
+            if (addr != old_dynamic_space_start) {
+#if 1
+                /* KLUDGE: make this output conditional on noinform?
+                 * Or just FSHOW? */
+                fprintf(stderr,
+                        "relocating dynamic space to: 0x%lx; from: 0x%lx \n",
+                        (long)addr, (long)old_dynamic_space_start);
 #endif
+                relocate_single((long *) addr,
+                                len / N_WORD_BYTES,
+                                (long *) old_dynamic_space_start,
+                                (long) addr - (long) old_dynamic_space_start);
+                /* We assume that static space comes before dynamic space,
+                 * and both in one directory */
+                relocation_fixup((long *) STATIC_SPACE_START,
+                                 static_space_len / N_WORD_BYTES,
+                                 (long *) old_dynamic_space_start,
+                                 len / N_WORD_BYTES,
+                                 (long) addr - (long) old_dynamic_space_start);
+            }
+
 #if defined(ALLOCATION_POINTER)
             SetSymbolValue(ALLOCATION_POINTER, (lispobj)free_pointer,0);
 #else
@@ -366,6 +387,7 @@ process_directory(int fd, lispobj *ptr, int count, os_vm_offset_t file_offset)
                         (long)addr, (long)STATIC_SPACE_START);
                 lose("core/runtime address mismatch: STATIC_SPACE_START\n");
             }
+            static_space_len = len;
             break;
         case READ_ONLY_CORE_SPACE_ID:
             if (addr != (os_vm_address_t)READ_ONLY_SPACE_START) {
@@ -482,7 +504,15 @@ load_core_file(char *file, os_vm_offset_t file_offset)
 
         case INITIAL_FUN_CORE_ENTRY_TYPE_CODE:
             SHOW("INITIAL_FUN_CORE_ENTRY_TYPE_CODE case");
-            initial_function = (lispobj)*ptr;
+            if ((lispobj) old_dynamic_space_start <= *ptr
+                && *ptr < (lispobj) (old_dynamic_space_start + dynamic_space_size))
+            {
+                initial_function
+                    = (lispobj)*ptr
+                    + (long) current_dynamic_space
+                    - (long) old_dynamic_space_start;
+            } else
+                initial_function = (lispobj)*ptr;
             break;
 
 #ifdef LISP_FEATURE_GENCGC

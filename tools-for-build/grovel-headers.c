@@ -477,6 +477,7 @@ main(int argc, char *argv[])
 
     printf(";;; Our runtime types\n");
     DEFTYPE("os-vm-size-t", os_vm_size_t);
+    DEFTYPE("os-vm-address-t", os_vm_address_t);
 
     return 0;
 }

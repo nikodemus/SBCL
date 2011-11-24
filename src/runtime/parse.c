@@ -262,7 +262,7 @@ static boolean lookup_symbol(char *name, lispobj *result)
 
     /* Search dynamic space. */
 #if defined(LISP_FEATURE_GENCGC)
-    headerptr = (lispobj *)DYNAMIC_SPACE_START;
+    headerptr = (lispobj *)dynamic_space_start;
     count = (lispobj *)get_alloc_pointer() - headerptr;
 #else
     headerptr = (lispobj *)current_dynamic_space;

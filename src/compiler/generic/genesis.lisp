@@ -2682,11 +2682,13 @@ core and return a descriptor to it."
       (check sb!vm:read-only-space-start sb!vm:read-only-space-end :read-only)
       (check sb!vm:static-space-start sb!vm:static-space-end :static)
       #!+gencgc
-      (check sb!vm:dynamic-space-start sb!vm:dynamic-space-end :dynamic)
+      (check sb!vm:default-dynamic-space-start sb!vm:default-dynamic-space-end :dynamic)
       #!-gencgc
       (progn
-        (check sb!vm:dynamic-0-space-start sb!vm:dynamic-0-space-end :dynamic-0)
-        (check sb!vm:dynamic-1-space-start sb!vm:dynamic-1-space-end :dynamic-1))
+        (check sb!vm:default-dynamic-0-space-start
+               sb!vm:default-dynamic-0-space-end :dynamic-0)
+        (check sb!vm:default-dynamic-1-space-start
+               sb!vm:default-dynamic-1-space-end :dynamic-1))
       #!+linkage-table
       (check sb!vm:linkage-table-space-start sb!vm:linkage-table-space-end :linkage-table))))
 
@@ -3291,8 +3293,8 @@ initially undefined function references:~2%")
                                      sb!vm:static-space-start))
            (*dynamic*   (make-gspace :dynamic
                                      dynamic-core-space-id
-                                     #!+gencgc sb!vm:dynamic-space-start
-                                     #!-gencgc sb!vm:dynamic-0-space-start))
+                                     #!+gencgc sb!vm:default-dynamic-space-start
+                                     #!-gencgc sb!vm:default-dynamic-0-space-start))
            (*nil-descriptor* (make-nil-descriptor))
            (*current-reversed-cold-toplevels* *nil-descriptor*)
            (*current-debug-sources* *nil-descriptor*)

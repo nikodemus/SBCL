@@ -47,6 +47,9 @@ lispobj *from_space_free_pointer;
 lispobj *new_space;
 lispobj *new_space_free_pointer;
 
+void *dynamic_0_space_start;
+void *dynamic_1_space_start;
+
 static void scavenge_newspace(void);
 
 
@@ -129,10 +132,10 @@ collect_garbage(generation_index_t ignore)
     fprintf(stderr,"from_space = %lx\n",
             (unsigned long) current_dynamic_space);
 #endif
-    if (current_dynamic_space == (lispobj *) DYNAMIC_0_SPACE_START)
-        new_space = (lispobj *)DYNAMIC_1_SPACE_START;
-    else if (current_dynamic_space == (lispobj *) DYNAMIC_1_SPACE_START)
-        new_space = (lispobj *) DYNAMIC_0_SPACE_START;
+    if (current_dynamic_space == (lispobj *) dynamic_0_space_start)
+        new_space = (lispobj *)dynamic_1_space_start;
+    else if (current_dynamic_space == (lispobj *) dynamic_1_space_start)
+        new_space = (lispobj *) dynamic_0_space_start;
     else {
         lose("GC lossage.  Current dynamic space is bogus!\n");
     }
@@ -414,7 +417,7 @@ void
 gc_initialize_pointers(void)
 {
     /* FIXME: We do nothing here.  We (briefly) misguidedly attempted
-       to set current_dynamic_space to DYNAMIC_0_SPACE_START here,
+       to set current_dynamic_space to dynamic_0_space_start here,
        forgetting that (a) actually it could be the other and (b) it's
        set in coreparse.c anyway.  There's a FIXME note left here to
        note that current_dynamic_space is a violation of OAOO: we can

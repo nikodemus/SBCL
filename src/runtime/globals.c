@@ -49,7 +49,7 @@ lispobj *current_auto_gc_trigger;
 
 /* For copying GCs, this points to the start of the dynamic space
  * currently in use (that will become the from_space when the next GC
- * is done).  For the GENCGC, it always points to DYNAMIC_SPACE_START. */
+ * is done).  For the GENCGC, it always points to dynamic_space_start. */
 lispobj *current_dynamic_space;
 
 #if defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_GCC_TLS)

@@ -62,16 +62,24 @@ validate(void)
 
     ensure_space( (lispobj *)READ_ONLY_SPACE_START, READ_ONLY_SPACE_SIZE);
     ensure_space( (lispobj *)STATIC_SPACE_START   , STATIC_SPACE_SIZE);
-#ifdef LISP_FEATURE_GENCGC
-    ensure_space( (lispobj *)DYNAMIC_SPACE_START  , dynamic_space_size);
-#else
-    ensure_space( (lispobj *)DYNAMIC_0_SPACE_START, dynamic_space_size);
-    ensure_space( (lispobj *)DYNAMIC_1_SPACE_START, dynamic_space_size);
-#endif
 
 #ifdef LISP_FEATURE_LINKAGE_TABLE
     ensure_space( (lispobj *)LINKAGE_TABLE_SPACE_START,
                   LINKAGE_TABLE_SPACE_SIZE);
+#endif
+
+#ifdef LISP_FEATURE_GENCGC
+    dynamic_space_start = os_validate(
+            (void *) DEFAULT_DYNAMIC_SPACE_START, dynamic_space_size, 0);
+    if (dynamic_space_start == 0)
+            lose("failed to validate dynamic space");
+#else
+    dynamic_0_space_start = os_validate(
+            DEFAULT_DYNAMIC_0_SPACE_START, dynamic_space_size, 0);
+    dynamic_1_space_start = os_validate(
+            DEFAULT_DYNAMIC_1_SPACE_START, dynamic_space_size, 0);
+    if (dynamic_0_space_start == 0 || dynamic_1_space_start == 0)
+            lose("failed to validate dynamic space");
 #endif
 
 #ifdef LISP_FEATURE_OS_PROVIDES_DLOPEN

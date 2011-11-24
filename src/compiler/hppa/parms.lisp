@@ -68,10 +68,10 @@
 (def!constant static-space-start    #x4e000000)
 (def!constant static-space-end      #x4fff0000)
 
-(def!constant dynamic-0-space-start   #x50000000)
-(def!constant dynamic-0-space-end     #x54000000)
-(def!constant dynamic-1-space-start   #x60000000)
-(def!constant dynamic-1-space-end     #x64000000)
+(def!constant default-dynamic-0-space-start   #x50000000)
+(def!constant default-dynamic-0-space-end     #x54000000)
+(def!constant default-dynamic-1-space-start   #x60000000)
+(def!constant default-dynamic-1-space-end     #x64000000)
 
 ); eval-when
 

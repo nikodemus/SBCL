@@ -101,11 +101,11 @@
   (def!constant static-space-start        #x28000000)
   (def!constant static-space-end          #x2c000000)
 
-  (def!constant dynamic-0-space-start #x30000000)
-  (def!constant dynamic-0-space-end   #x38000000)
+  (def!constant default-dynamic-0-space-start #x30000000)
+  (def!constant default-dynamic-0-space-end   #x38000000)
 
-  (def!constant dynamic-1-space-start #x40000000)
-  (def!constant dynamic-1-space-end   #x48000000))
+  (def!constant default-dynamic-1-space-start #x40000000)
+  (def!constant default-dynamic-1-space-end   #x48000000))
 
 #!+sunos ; might as well start by trying the same numbers
 (progn
@@ -118,11 +118,11 @@
   (def!constant static-space-start        #x28000000)
   (def!constant static-space-end          #x2c000000)
 
-  (def!constant dynamic-0-space-start     #x30000000)
-  (def!constant dynamic-0-space-end       #x38000000)
+  (def!constant default-dynamic-0-space-start     #x30000000)
+  (def!constant default-dynamic-0-space-end       #x38000000)
 
-  (def!constant dynamic-1-space-start     #x40000000)
-  (def!constant dynamic-1-space-end       #x48000000))
+  (def!constant default-dynamic-1-space-start     #x40000000)
+  (def!constant default-dynamic-1-space-end       #x48000000))
 
 #!+netbsd ; Need a gap at 0x4000000 for shared libraries
 (progn

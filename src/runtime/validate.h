@@ -16,6 +16,14 @@
 /* FIXME: genesis/constants.h also defines this with a constant value */
 #define DYNAMIC_SPACE_START current_dynamic_space
 #endif
+#ifndef LANGUAGE_ASSEMBLY
+#ifdef LISP_FEATURE_GENCGC
+extern void *dynamic_space_start;
+#else
+extern void *dynamic_0_space_start;
+extern void *dynamic_1_space_start;
+#endif
+#endif
 
 #define BINDING_STACK_SIZE (1024*1024)   /* chosen at random */
 #define ALIEN_STACK_SIZE (1024*1024)     /* chosen at random */
@@ -25,9 +33,9 @@
 
 /* constants derived from the fundamental constants in passed by GENESIS */
 #ifdef LISP_FEATURE_GENCGC
-#define DEFAULT_DYNAMIC_SPACE_SIZE (DYNAMIC_SPACE_END - DYNAMIC_SPACE_START)
+#define DEFAULT_DYNAMIC_SPACE_SIZE (DEFAULT_DYNAMIC_SPACE_END - DEFAULT_DYNAMIC_SPACE_START)
 #else
-#define DEFAULT_DYNAMIC_SPACE_SIZE (DYNAMIC_0_SPACE_END - DYNAMIC_0_SPACE_START)
+#define DEFAULT_DYNAMIC_SPACE_SIZE (DEFAULT_DYNAMIC_0_SPACE_END - DEFAULT_DYNAMIC_0_SPACE_START)
 #endif
 #define READ_ONLY_SPACE_SIZE (READ_ONLY_SPACE_END - READ_ONLY_SPACE_START)
 #define STATIC_SPACE_SIZE (STATIC_SPACE_END - STATIC_SPACE_START)
