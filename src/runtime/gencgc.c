@@ -1458,10 +1458,10 @@ copy_large_object(lispobj object, long nwords)
 
         /* Promote the object. */
 
-        unsigned long remaining_bytes;
+        os_vm_size_t remaining_bytes;
+        os_vm_size_t bytes_freed;
         page_index_t next_page;
-        unsigned long bytes_freed;
-        unsigned long old_bytes_used;
+        page_bytes_t old_bytes_used;
 
         /* Note: Any page write-protection must be removed, else a
          * later scavenge_newspace may incorrectly not scavenge these
