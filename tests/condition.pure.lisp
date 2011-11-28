@@ -189,3 +189,14 @@
                   (when (and (eq 'list (type-error-expected-type e))
                              (eql 8 (type-error-datum e)))
                     :type-error))))))
+
+(with-test (:name :bug-896379)
+  (let (#+sb-eval
+        (*evaluator-mode* :compile))
+    (handler-bind ((style-warning #'error))
+      (let ((reader (gensym "READER"))
+            (name (gensym "FOO-ERROR")))
+        (eval `(define-condition ,name (error)
+                 ((slot :initarg :slot :reader ,reader))
+                 (:report (lambda (c stream)
+                            (format stream "Oops: ~S" (,reader c))))))))))
