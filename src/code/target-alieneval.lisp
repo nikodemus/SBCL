@@ -299,14 +299,23 @@ Examples:
                                        ,size-expr))
                        ',(make-alien-pointer-type :to alien-type)))))))
 
+(defun foreign-heap-exhausted-error (bytes)
+  (error 'simple-storage-condition
+         :format-control "Foreign heap exhausted? Could not malloc() ~S bytes."
+         :format-arguments (list bytes)))
+
 ;;; Allocate a block of memory at least BITS bits long and return a
 ;;; system area pointer to it.
 #!-sb-fluid (declaim (inline %make-alien))
 (defun %make-alien (bits)
   (declare (type index bits))
-  (alien-funcall (extern-alien "malloc"
-                               (function system-area-pointer unsigned))
-                 (ash (the index (+ bits 7)) -3)))
+  (let* ((bytes (ash (the index (+ bits 7)) -3))
+         (sap (alien-funcall (extern-alien "malloc"
+                                           (function system-area-pointer unsigned))
+                             bytes)))
+    (if (and (not (eql 0 bits)) (eql 0 (sap-int sap)))
+        (foreign-heap-exhausted-error bytes)
+        sap)))
 
 #!-sb-fluid (declaim (inline free-alien))
 (defun free-alien (alien)
