@@ -384,33 +384,35 @@ corresponds to NAME, or NIL if there is none."
 ;;; style returned by getcwd() (no trailing slash character).
 #!-win32
 (defun posix-getcwd ()
-  ;; This implementation relies on a BSD/Linux extension to getcwd()
-  ;; behavior, automatically allocating memory when a null buffer
-  ;; pointer is used. On a system which doesn't support that
-  ;; extension, it'll have to be rewritten somehow.
-  ;;
-  ;; SunOS and OSF/1 provide almost as useful an extension: if given a null
-  ;; buffer pointer, it will automatically allocate size space. The
-  ;; KLUDGE in this solution arises because we have just read off
-  ;; PATH_MAX+1 from the Solaris header files and stuck it in here as
-  ;; a constant. Going the grovel_headers route doesn't seem to be
-  ;; helpful, either, as Solaris doesn't export PATH_MAX from
-  ;; unistd.h.
-  ;;
-  ;; FIXME: The (,stub,) nastiness produces an error message about a
-  ;; comma not inside a backquote. This error has absolutely nothing
-  ;; to do with the actual meaning of the error (and little to do with
-  ;; its location, either).
-  #!-(or linux openbsd freebsd netbsd sunos osf1 darwin hpux win32) (,stub,)
-  #!+(or linux openbsd freebsd netbsd sunos osf1 darwin hpux win32)
-  (or (newcharstar-string (alien-funcall (extern-alien "getcwd"
-                                                       (function (* char)
-                                                                 (* char)
-                                                                 size-t))
-                                         nil
-                                         #!+(or linux openbsd freebsd netbsd darwin win32) 0
-                                         #!+(or sunos osf1 hpux) 1025))
-      (simple-perror "getcwd")))
+  (let ((foreign nil)
+        (size 1024))
+    (loop
+      (unwind-protect
+          (progn
+            (setf foreign (make-alien char size))
+            (if (eql 0 (sap-int
+                        (alien-funcall (extern-alien "getcwd"
+                                                     (function system-area-pointer
+                                                               (* char)
+                                                               size-t))
+                                       foreign
+                                       size)))
+                (if (> size +path-max+)
+                    (simple-perror "getcwd")
+                    (setf size (* size 2)))
+                (return-from posix-getcwd
+                  ;; KLUDGE: UTF-8 seems to be the standard, but pathnames are
+                  ;; really binary sludge.
+                  ;;
+                  ;; It /might/ make sense to check using the locale external format
+                  ;; first, but if that happens to be a wide character format, then
+                  ;; all hell could break loose since the pathname we have is
+                  ;; null-terminated.
+                  (or (ignore-errors
+                       (sb!alien::c-string-to-string (alien-sap foreign) :utf-8 'character))
+                      (sb!alien::c-string-to-string (alien-sap foreign) :latin1 'character)))))
+       (when foreign
+         (free-alien foreign))))))
 
 ;;; Return the Unix current directory as a SIMPLE-STRING terminated
 ;;; by a slash character.

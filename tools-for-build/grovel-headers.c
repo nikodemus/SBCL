@@ -254,6 +254,8 @@ main(int argc, char *argv[])
 
     printf("(in-package \"SB!UNIX\")\n\n");
 
+    defconstant("+path-max+", PATH_MAX);
+
     printf(";;; select()\n");
     defconstant("fd-setsize", FD_SETSIZE);
 
