@@ -88,6 +88,9 @@ do
       --without)
         WITHOUT_FEATURES="$WITHOUT_FEATURES :$optarg"
 	;;
+      --fancy)
+        WITH_FEATURES="$WITH_FEATURES :sb-thread :sb-core-compression :sb-xref-for-internals :sb-after-xc-core"
+        ;;
       -*)
         bad_option "Unknown command-line option to $0: \"$option\""
         ;;
