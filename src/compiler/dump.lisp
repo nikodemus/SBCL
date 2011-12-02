@@ -24,11 +24,13 @@
             #-no-ansi-print-object
             (:print-object (lambda (x s)
                              (print-unreadable-object (x s :type t)
-                               (prin1 (namestring (fasl-output-stream x))
+                               (prin1 (namestring (fasl-output-compile-file-stream x))
                                       s))))
             (:copier nil))
   ;; the stream we dump to
   (stream (missing-arg) :type stream)
+  ;; the stream COMPILE-FILE made
+  (compile-file-stream (missing-arg) :type stream)
   ;; hashtables we use to keep track of dumped constants so that we
   ;; can get them from the table rather than dumping them again. The
   ;; EQUAL-TABLE is used for lists and strings, and the EQ-TABLE is
@@ -94,6 +96,8 @@
 ;;; used to turn off the structure validation during dumping of source
 ;;; info
 (defvar *dump-only-valid-structures* t)
+
+(defvar *fasl-output-streams* nil)
 ;;;; utilities
 
 ;;; Write the byte B to the specified FASL-OUTPUT stream.
@@ -268,11 +272,15 @@
            #-sb-xc-host
            (write-sequence (string-to-octets string :external-format :utf-8)
                            stream)))
-    (let* ((stream (open name
-                         :direction :output
-                         :if-exists :supersede
-                         :element-type 'sb!assem:assembly-unit))
-           (res (make-fasl-output :stream stream)))
+    (let* ((cf-stream (open name
+                            :direction :output
+                            :if-exists :supersede
+                            :element-type 'sb!assem:assembly-unit))
+           (stream (if *fasl-output-streams*
+                       (apply #'make-broadcast-stream
+                              cf-stream *fasl-output-streams*)
+                       cf-stream))
+           (res (make-fasl-output :stream stream :compile-file-stream cf-stream)))
       ;; Before the actual FASL header, write a shebang line using the current
       ;; runtime path, so our fasls can be executed directly from the shell.
       (when *runtime-pathname*
@@ -331,7 +339,11 @@
     (dump-fop 'fop-end-group fasl-output))
 
   ;; That's all, folks.
-  (close (fasl-output-stream fasl-output) :abort abort-p)
+  (let ((main (fasl-output-stream fasl-output))
+        (cfs (fasl-output-compile-file-stream fasl-output)))
+    (close main :abort abort-p)
+    (unless (eq main cfs)
+      (close cfs :abort abort-p)))
   (values))
 
 ;;;; main entries to object dumping

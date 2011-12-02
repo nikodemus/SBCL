@@ -191,6 +191,11 @@ Following options are defined:
 
       This is an SBCL-specific extension.
 
+  :OUTPUT-FILE Fasl-Pathname-Form
+      Causes all COMPILE-FILE operations inside the compilation unit
+      to additionally emit their outputs to the specified combined
+      fasl.
+
 Examples:
 
   ;; Prevent proclamations from the file leaking, and restrict
@@ -216,42 +221,52 @@ Examples:
 (defvar *source-plist* nil)
 (defvar *source-namestring* nil)
 
-(defun %with-compilation-unit (fn &key override policy source-plist source-namestring)
+(defun %with-compilation-unit (fn &key override policy source-plist source-namestring
+                                       output-file)
   (declare (type function fn))
-  (flet ((with-it ()
-           (let ((succeeded-p nil)
-                 (*source-plist* (append source-plist *source-plist*))
-                 (*source-namestring* (or source-namestring *source-namestring*)))
-             (if (and *in-compilation-unit* (not override))
-                 ;; Inside another WITH-COMPILATION-UNIT, a WITH-COMPILATION-UNIT is
-                 ;; ordinarily (unless OVERRIDE) basically a no-op.
-                 (unwind-protect
-                      (multiple-value-prog1 (funcall fn) (setf succeeded-p t))
-                   (unless succeeded-p
-                     (incf *aborted-compilation-unit-count*)))
-                 (let ((*aborted-compilation-unit-count* 0)
-                       (*compiler-error-count* 0)
-                       (*compiler-warning-count* 0)
-                       (*compiler-style-warning-count* 0)
-                       (*compiler-note-count* 0)
-                       (*undefined-warnings* nil)
-                       (*in-compilation-unit* t))
-                   (with-world-lock ()
-                     (handler-bind ((parse-unknown-type
-                                     (lambda (c)
-                                       (note-undefined-reference
-                                        (parse-unknown-type-specifier c)
-                                        :type))))
-                       (unwind-protect
-                            (multiple-value-prog1 (funcall fn) (setf succeeded-p t))
-                         (unless succeeded-p
-                           (incf *aborted-compilation-unit-count*))
-                         (summarize-compilation-unit (not succeeded-p))))))))))
+  (labels ((with-it ()
+             (let ((succeeded-p nil)
+                   (*source-plist* (append source-plist *source-plist*))
+                   (*source-namestring* (or source-namestring *source-namestring*)))
+               (if (and *in-compilation-unit* (not override))
+                   ;; Inside another WITH-COMPILATION-UNIT, a WITH-COMPILATION-UNIT is
+                   ;; ordinarily (unless OVERRIDE) basically a no-op.
+                   (unwind-protect
+                        (multiple-value-prog1 (funcall fn) (setf succeeded-p t))
+                     (unless succeeded-p
+                       (incf *aborted-compilation-unit-count*)))
+                   (let ((*aborted-compilation-unit-count* 0)
+                         (*compiler-error-count* 0)
+                         (*compiler-warning-count* 0)
+                         (*compiler-style-warning-count* 0)
+                         (*compiler-note-count* 0)
+                         (*undefined-warnings* nil)
+                         (*in-compilation-unit* t))
+                     (with-world-lock ()
+                       (handler-bind ((parse-unknown-type
+                                        (lambda (c)
+                                          (note-undefined-reference
+                                           (parse-unknown-type-specifier c)
+                                           :type))))
+                         (unwind-protect
+                              (multiple-value-prog1 (funcall fn) (setf succeeded-p t))
+                           (unless succeeded-p
+                             (incf *aborted-compilation-unit-count*))
+                           (summarize-compilation-unit (not succeeded-p)))))))))
+           (with-output-file ()
+             (if output-file
+                 (with-open-file (f (compile-file-pathname output-file :output-file output-file)
+                                    :element-type '(unsigned-byte 8)
+                                    :direction :output
+                                    :if-exists :supersede)
+                   (let ((*fasl-output-streams* (cons f *fasl-output-streams*)))
+                     (with-it)))
+                 (with-it))))
     (if policy
         (let ((*policy* (process-optimize-decl policy (unless override *policy*)))
               (*policy-restrictions* (unless override *policy-restrictions*)))
-          (with-it))
-        (with-it))))
+          (with-output-file))
+        (with-output-file))))
 
 ;;; Is NAME something that no conforming program can rely on
 ;;; defining?
@@ -1872,7 +1887,7 @@ SPEED and COMPILATION-SPEED optimization values, and the
       (when fasl-output
         (close-fasl-output fasl-output abort-p)
         (setq output-file-name
-              (pathname (fasl-output-stream fasl-output)))
+              (pathname (fasl-output-compile-file-stream fasl-output)))
         (when (and (not abort-p) sb!xc:*compile-verbose*)
           (compiler-mumble "~2&; ~A written~%" (namestring output-file-name))))
 
