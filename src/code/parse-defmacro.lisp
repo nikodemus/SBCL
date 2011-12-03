@@ -328,7 +328,8 @@
           (push `(multiple-value-bind (,problem ,info)
                      (verify-keywords ,rest-name
                                       ',keys
-                                      ',allow-other-keys-p)
+                                      ',allow-other-keys-p
+                                      ,(eq 'define-compiler-macro context))
                    (when ,problem
                      (,error-fun
                       'defmacro-lambda-list-broken-key-list-error
@@ -407,25 +408,34 @@
 ;;; Determine whether KEY-LIST is a valid list of keyword/value pairs.
 ;;; Do not signal the error directly, 'cause we don't know how it
 ;;; should be signaled.
-(defun verify-keywords (key-list valid-keys allow-other-keys)
+(defun verify-keywords (key-list valid-keys allow-other-keys &optional compiler-macro)
   (do ((already-processed nil)
        (unknown-keyword nil)
        (remaining key-list (cddr remaining)))
       ((null remaining)
-       (if (and unknown-keyword
-                (not allow-other-keys)
-                (not (lookup-keyword :allow-other-keys key-list)))
-           (values :unknown-keyword (list unknown-keyword valid-keys))
-           (values nil nil)))
-    (cond ((not (and (consp remaining) (listp (cdr remaining))))
-           (return (values :dotted-list key-list)))
-          ((null (cdr remaining))
-           (return (values :odd-length key-list)))
-          ((or (eq (car remaining) :allow-other-keys)
-               (member (car remaining) valid-keys))
-           (push (car remaining) already-processed))
-          (t
-           (setq unknown-keyword (car remaining))))))
+       (cond ((and unknown-keyword
+                   (not allow-other-keys)
+                   (not (lookup-keyword :allow-other-keys key-list)))
+              (when compiler-macro
+                (signal 'compiler-macro-keyword-problem))
+              (values :unknown-keyword (list unknown-keyword valid-keys)))
+             (t
+              (values nil nil))))
+    (let ((key (when (consp remaining)
+                 (car remaining))))
+      (cond ((not (and (consp remaining) (listp (cdr remaining))))
+             (return (values :dotted-list key-list)))
+            ((null (cdr remaining))
+             (return (values :odd-length key-list)))
+            ((or (eq key :allow-other-keys)
+                 (member key valid-keys))
+             (when (and compiler-macro (not (keywordp key)))
+               (signal 'compiler-macro-keyword-problem))
+             (push key already-processed))
+           (t
+            (when (and compiler-macro (not (keywordp key)))
+              (signal 'compiler-macro-keyword-problem))
+            (setq unknown-keyword key))))))
 
 (defun lookup-keyword (keyword key-list)
   (do ((remaining key-list (cddr remaining)))

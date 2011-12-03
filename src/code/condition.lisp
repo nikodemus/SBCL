@@ -1735,5 +1735,9 @@ not exists.")
 condition, stepping into the current form. Signals a CONTROL-ERROR is
 the restart does not exist."))
 
-(/show0 "condition.lisp end of file")
+;;; Compiler macro magic
 
+(define-condition compiler-macro-keyword-problem ()
+  ())
+
+(/show0 "condition.lisp end of file")

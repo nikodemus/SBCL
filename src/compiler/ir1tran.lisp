@@ -732,7 +732,10 @@
                       ;; CLHS 3.2.2.1.3 specifies that NOTINLINE
                       ;; suppresses compiler-macros.
                       (not (fun-lexically-notinline-p cmacro-fun-name)))
-                 (let ((res (careful-expand-macro cmacro-fun form t)))
+                 (let ((res (handler-case
+                                (careful-expand-macro cmacro-fun form t)
+                              (sb!kernel::compiler-macro-keyword-problem ()
+                                form))))
                    (cond ((eq res form)
                           (ir1-convert-common-functoid start next result form op))
                          (t
