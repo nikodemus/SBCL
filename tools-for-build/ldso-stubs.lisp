@@ -206,6 +206,10 @@ ldso_stub__ ## fct: ;                  \\
                    "cfsetospeed"
                    "chmod"
                    "chown"
+                   #!+os-provides-clock-nanosleep
+                   "clock_nanosleep"
+                   #!+os-provides-clock-nanosleep
+                   "clock_gettime"
                    "close"
                    "closedir"
                    "connect"

@@ -21,6 +21,8 @@ endif
 
 GC_SRC = gencgc.c
 
+include Config.posix
+
 # Nothing to do for after-grovel-headers.
 .PHONY: after-grovel-headers
 after-grovel-headers:

@@ -32,6 +32,8 @@ ifdef LISP_FEATURE_SB_CORE_COMPRESSION
   OS_LIBS += -lz
 endif
 
+include Config.posix
+
 # Nothing to do for after-grovel-headers.
 .PHONY: after-grovel-headers
 after-grovel-headers:

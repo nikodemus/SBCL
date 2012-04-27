@@ -25,6 +25,8 @@ endif
 
 GC_SRC = cheneygc.c
 
+include Config.posix
+
 # Nothing to do for after-grovel-headers.
 .PHONY: after-grovel-headers
 after-grovel-headers:

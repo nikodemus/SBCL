@@ -32,6 +32,7 @@
   #include <shlobj.h>
   #undef boolean
 #else
+  #include <time.h>
   #include <poll.h>
   #include <sys/select.h>
   #include <sys/times.h>
@@ -268,6 +269,7 @@ main(int argc, char *argv[])
     defconstant("codeset", CODESET);
 
     printf(";;; types, types, types\n");
+    DEFTYPE("clockid-t", clockid_t);
     DEFTYPE("clock-t", clock_t);
     DEFTYPE("dev-t",   dev_t);
     DEFTYPE("gid-t",   gid_t);
@@ -294,6 +296,11 @@ main(int argc, char *argv[])
     DEFTYPE("wst-uid-t", wst_uid_t);
     DEFTYPE("wst-gid-t", wst_gid_t);
     printf("\n");
+
+    printf(";;; clock constants\n");
+    defconstant("+clock-realtime+", CLOCK_REALTIME);
+    defconstant("+clock-monotonic+", CLOCK_REALTIME);
+    defconstant("+timer-abstime+", TIMER_ABSTIME);
 
     printf(";;; fcntl.h (or unistd.h on OpenBSD and NetBSD)\n");
     defconstant("r_ok", R_OK);

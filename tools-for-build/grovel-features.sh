@@ -7,12 +7,22 @@ cd ./tools-for-build > /dev/null
 # Assumes the presence of $1-test.c, which when built and
 # run should return with 104 if the feature is present.
 featurep() {
+    printf "featurep $1 " 1>&2
     bin="$1-test"
     rm -f $bin
-    $GNUMAKE $bin -I ../src/runtime > /dev/null 2>&1 && echo "input" | ./$bin> /dev/null 2>&1
-    if [ "$?" = 104 ]
+    info=`$GNUMAKE $bin -I ../src/runtime 2>&1`
+    if [ "$?" = 0 ]
     then
-        printf " :$1"
+        info=`echo "input" | ./$bin 2>&1`
+        if [ "$?" = 104 ]
+        then
+            printf "ok\n" 1>&2
+            printf " :$1"
+        else
+            printf "invalid exit status:\n$info\n" 1>&2
+        fi
+    else
+            printf "could not build:\n$info\n" 1>&2
     fi
     rm -f $bin
 }
@@ -32,3 +42,6 @@ featurep os-provides-suseconds-t
 featurep os-provides-getprotoby-r
 
 featurep os-provides-poll
+
+featurep os-provides-clock-nanosleep
+

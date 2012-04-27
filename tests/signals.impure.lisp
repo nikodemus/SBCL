@@ -81,3 +81,49 @@
              (sb-ext:with-timeout 0.1 (sleep 1) t))))
      (sb-ext:timeout ()
        nil))))
+
+(with-test (:name :nested-sleeps)
+  (let* ((*level* -1)
+         (timer-count 20) ; tuning parameters
+         (min-sleep 0.0001)
+         (max-sleep 0.001)
+         (target 10)
+         (nesting-table (make-array 0 :initial-element 0 :adjustable t :fill-pointer 0))
+         (firing-table (make-array timer-count :initial-element 0))
+         (count 0)
+         (make-timekeeper
+           (lambda (id)
+             (lambda ()
+               (let* ((level (1+ *level*))
+                      (*level* level))
+                 (declare (special *level*))
+                 (if (< level (length nesting-table))
+                     (incf (aref nesting-table level))
+                     (vector-push-extend 1 nesting-table))
+                 (incf count)
+                 (incf (aref firing-table id))
+                 (let ((sec (+ min-sleep (random max-sleep))))
+                   (sb-sys:with-interrupts
+                     (sleep sec)))))))
+         (timers (loop for i from 0 below timer-count
+                       collect
+                          (sb-ext:make-timer (funcall make-timekeeper i)
+                                             :name (format nil "Sleep Timer ~S" i)))))
+    (declare (special *level*))
+    (sb-sys:without-interrupts
+      (dolist (timer timers)
+        (sb-ext:schedule-timer timer (+ min-sleep (random max-sleep))
+                               :repeat-interval (+ min-sleep (random max-sleep)))))
+    (sleep 0.1)
+    (sb-sys:without-interrupts
+      (loop for nesting = (length nesting-table)
+            for mincount = (reduce #'min firing-table)
+            until (and (= nesting timer-count) (<= target mincount))
+            do (format t "Spinning: Count ~D,  Mincount ~D, Nesting ~D~%"
+                       count mincount nesting)
+               (sb-sys:with-local-interrupts
+                 (sleep 0.1))))
+    (sb-sys:without-interrupts
+      (dolist (timer timers)
+        (sb-ext:unschedule-timer timer)))
+    (values firing-table nesting-table)))

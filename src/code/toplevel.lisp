@@ -196,23 +196,7 @@ any non-negative real number."
            :format-arguments (list seconds)
            :datum seconds
            :expected-type '(real 0)))
-  #!-win32
-  (multiple-value-bind (sec nsec)
-      (if (integerp seconds)
-          (values seconds 0)
-          (multiple-value-bind (sec frac)
-              (truncate seconds)
-            (values sec (truncate frac 1e-9))))
-    ;; nanosleep() accepts time_t as the first argument, but on some platforms
-    ;; it is restricted to 100 million seconds. Maybe someone can actually
-    ;; have a reason to sleep for over 3 years?
-    (loop while (> sec (expt 10 8))
-          do (decf sec (expt 10 8))
-             (sb!unix:nanosleep (expt 10 8) 0))
-    (sb!unix:nanosleep sec nsec))
-  #!+win32
-  (sb!win32:millisleep (truncate (* seconds 1000)))
-  nil)
+  (os-sleep seconds))
 
 ;;;; the default toplevel function
 

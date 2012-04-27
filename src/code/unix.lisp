@@ -957,42 +957,83 @@ avoiding atexit(3) hooks, etc. Otherwise exit(2) is called."
   (seconds-west sb!alien:int :out)
   (daylight-savings-p sb!alien:boolean :out))
 
-#!-win32
-(defun nanosleep (secs nsecs)
-  (with-alien ((req (struct timespec))
-               (rem (struct timespec)))
-    (setf (slot req 'tv-sec) secs
-          (slot req 'tv-nsec) nsecs)
-    (loop while (and (eql sb!unix:eintr
-                          (nth-value 1
-                                     (int-syscall ("nanosleep" (* (struct timespec))
-                                                               (* (struct timespec)))
-                                                  (addr req) (addr rem))))
-                     ;; KLUDGE: On Darwin, if an interrupt cases nanosleep to
-                     ;; take longer than the requested time, the call will
-                     ;; return with EINT and (unsigned)-1 seconds in the
-                     ;; remainder timespec, which would cause us to enter
-                     ;; nanosleep again for ~136 years. So, we check that the
-                     ;; remainder time is actually decreasing.
-                     ;;
-                     ;; It would be neat to do this bit of defensive
-                     ;; programming on all platforms, but unfortunately on
-                     ;; Linux, REM can be a little higher than REQ if the
-                     ;; nanosleep() call is interrupted quickly enough,
-                     ;; probably due to the request being rounded up to the
-                     ;; nearest HZ. This would cause the sleep to return way
-                     ;; too early.
-                     #!+darwin
-                     (let ((rem-sec (slot rem 'tv-sec))
-                           (rem-nsec (slot rem 'tv-nsec)))
-                       (when (or (> secs rem-sec)
-                                 (and (= secs rem-sec) (>= nsecs rem-nsec)))
-                         ;; Update for next round.
-                         (setf secs  rem-sec
-                               nsecs rem-nsec)
-                         t)))
-          do (setf (slot req 'tv-sec) (slot rem 'tv-sec)
-                   (slot req 'tv-nsec) (slot rem 'tv-nsec)))))
+#!+os-provides-clock-nanosleep
+(defun os-sleep (seconds)
+  (multiple-value-bind (sec nsec)
+      (if (integerp seconds)
+          (values seconds 0)
+          (multiple-value-bind (sec frac)
+              (truncate seconds)
+            (values sec (truncate frac 1e-9))))
+    (with-alien ((time (struct timespec)))
+      (int-syscall ("clock_gettime" clockid-t (* (struct timespec)))
+                   +clock-monotonic+ (addr time))
+      (setf (slot time 'tv-sec) (+ sec (slot time 'tv-sec)))
+      (let* ((target-nsec (+ (slot time 'tv-nsec) nsec))
+             (mod-nsec (mod target-nsec (1- (expt 10 9)))))
+        (setf (slot time 'tv-nsec) mod-nsec)
+        (when (< mod-nsec nsec)
+          (setf (slot time 'tv-sec) (+ 1 (slot time 'tv-sec)))))
+      (loop for signal
+               = (nth-value 1 (int-syscall
+                                  ("clock_nanosleep"
+                                   clockid-t int
+                                   (* (struct timespec))
+                                   (* (struct timespec)))
+                                  +clock-monotonic+ +timer-abstime+
+                                  (addr time)
+                                  (int-sap 0)))
+            while (eql signal eintr))))
+  nil)
+
+#!-(or win32 os-provides-clock-nanosleep)
+(defun os-sleep (seconds)
+  (multiple-value-bind (sec nsec)
+      (if (integerp seconds)
+          (values seconds 0)
+          (multiple-value-bind (sec frac)
+              (truncate seconds)
+            (values sec (truncate frac 1e-9))))
+    ;; nanosleep() accepts time_t as the first argument, but on some
+    ;; platforms it is restricted to 100 million seconds. Can someone
+    ;; can actually have a reason to sleep for over 3 years?
+    (when (> sec (expt 10 8))
+      (setf sec (expt 10 8)))
+    (with-alien ((req (struct timespec))
+                 (rem (struct timespec)))
+      (setf (slot req 'tv-sec) sec
+            (slot req 'tv-nsec) nsec)
+      (loop for signal
+               = (nth-value 1 (int-syscall ("nanosleep"
+                                            (* (struct timespec))
+                                            (* (struct timespec)))
+                                           (addr req) (addr rem)))
+            while (and (eql signal eintr)
+                       ;; KLUDGE: On Darwin, if an interrupt cases
+                       ;; nanosleep to take longer than the requested
+                       ;; time, the call will return with EINT and
+                       ;; (unsigned)-1 seconds in the remainder
+                       ;; timespec, which would cause us to enter
+                       ;; nanosleep again for ~136 years. So, we check
+                       ;; that the remainder time is actually
+                       ;; decreasing.
+                       ;;
+                       ;; It would be neat to do this bit of defensive
+                       ;; programming on all platforms, but on Linux
+                       ;; REM can be a little higher than REQ if the
+                       ;; nanosleep() call is interrupted quickly
+                       ;; enough, due to the request being rounded up
+                       ;; to the nearest HZ. This would cause the
+                       ;; sleep to return way too early.
+                       #!+darwin
+                       (let ((rem-sec (slot rem 'tv-sec))
+                             (rem-nsec (slot rem 'tv-nsec)))
+                         (when (or (> secs rem-sec)
+                                   (and (= secs rem-sec) (>= nsecs rem-nsec)))
+                           t)))
+            do (setf (slot req 'tv-sec) (slot rem 'tv-sec)
+                     (slot req 'tv-nsec) (slot rem 'tv-nsec)))))
+  nil)
 
 (defun unix-get-seconds-west (secs)
   (multiple-value-bind (ignore seconds dst) (get-timezone secs)

@@ -154,6 +154,10 @@
 
 ;;;; System Functions
 
+(defun os-sleep (seconds)
+  (sb!win32:millisleep (truncate (* seconds 1000)))
+  nil)
+
 ;;; Sleep for MILLISECONDS milliseconds.
 (define-alien-routine ("Sleep@4" millisleep) void
   (milliseconds dword))
