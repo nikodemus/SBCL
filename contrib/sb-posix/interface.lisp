@@ -299,8 +299,9 @@
 
   ;; processes, signals
   (define-call "alarm" int never-fails (seconds unsigned))
-
-
+  (define-call "abort" void never-fails)
+  (define-call "exit" void never-fails (status int))
+  (define-call "_exit" void never-fails (status int))
 
   ;; FIXME this is a lie, of course this can fail, but there's no
   ;; error handling here yet!
