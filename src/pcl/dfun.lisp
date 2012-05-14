@@ -83,6 +83,9 @@ Except see also BREAK-VICIOUS-METACIRCLE.  -- CSR, 2003-05-28
 ;;;   (<generator> . (<subentry> ...)).
 ;;; Each subentry is of the form
 ;;;   (<args> <constructor> <system>).
+;;;
+;;; FIXME: THREAD SAFETY. Currently we may lose entries from this list,
+;;; causing duplicate work.
 (defvar *dfun-constructors* ())
 
 ;;; If this is NIL, then the whole mechanism for caching dfun constructors is
@@ -114,10 +117,10 @@ Except see also BREAK-VICIOUS-METACIRCLE.  -- CSR, 2003-05-28
   (let* ((generator-entry (assq generator *dfun-constructors*))
          (args-entry (assoc args (cdr generator-entry) :test #'equal)))
     (if (null *enable-dfun-constructor-caching*)
-        (apply (fdefinition generator) args)
+        (apply generator args)
         (or (cadr args-entry)
             (multiple-value-bind (new not-best-p)
-                (apply (symbol-function generator) args)
+                (apply generator args)
               (let ((entry (list (copy-list args) new (unless not-best-p 'pcl)
                                  not-best-p)))
                 (if generator-entry

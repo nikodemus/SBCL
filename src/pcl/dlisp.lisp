@@ -159,19 +159,415 @@
 
 ;;; --------------------------------
 
-;;; FIXME: What do these variables mean?
-(defvar *precompiling-lap* nil)
+(defvar *precompiling-lap* nil
+  "When T GENERATING-LISP returns a LAMBDA form. When NIL, it compiles that same form.")
+
+(defun generate-lisp-p ()
+  ;; FIXME:
+  ;;
+  ;; 1. Some of the "non-generated" versions look like they're
+  ;;    going to pretty much always perform at least as well as
+  ;;    the generated ones -- as there is little point in generating
+  ;;    those. Benchmark and make sure.
+  ;;
+  ;; 2. While this is enough to get PCL to build, it would be good
+  ;;    to figure out which ones are actually needed for bootstrap.
+  ;;
+  ;; 3. For some generated functions, share similar ones instead of re-generating
+  ;;    them all the time, which is good. See *ENABLE-DFUN-CONSTRUCTOR-CACHING*.
+  ;;
+  ;; 4. Once we know which is fast, we can always take that path, plus add "if
+  ;;    the world-lock-is free" as extra precondition for compilng.
+  (or *precompiling-lap* (eq 'early **boot-state**)))
 
 (defun emit-default-only (metatypes applyp)
-  (multiple-value-bind (lambda-list args rest-arg more-arg)
-      (make-dlap-lambda-list (length metatypes) applyp)
-    (generating-lisp '(emf)
-                     lambda-list
-                     `(invoke-effective-method-function emf
-                                                        ,applyp
-                                                        :required-args ,args
-                                                        :more-arg ,more-arg
-                                                        :rest-arg ,rest-arg))))
+  (if (generate-lisp-p)
+      (multiple-value-bind (lambda-list args rest-arg more-arg)
+          (make-dlap-lambda-list (length metatypes) applyp)
+        (generating-lisp '(emf)
+                         lambda-list
+                         `(invoke-effective-method-function emf
+                                                            ,applyp
+                                                            :required-args ,args
+                                                            :more-arg ,more-arg
+                                                            :rest-arg ,rest-arg)))
+      (lambda (emf)
+        (declare #.*optimize-speed*)
+        (lambda (&rest args)
+          (declare (dynamic-extent args))
+          (invoke-emf emf args)))))
+
+;;;; Used by slot accessors generators below
+
+(defmacro with-wrapper-and-slots-or-miss
+    ((check wrapper slots miss instance &optional value) &body body)
+  `(block nil
+     (flet ((miss ()
+              ,(if value
+                   `(return (funcall ,miss ,value ,instance))
+                   `(return (funcall ,miss ,instance)))))
+       (multiple-value-bind (,wrapper ,@(when slots (list slots)))
+           ,(if slots
+                `(cond ((std-instance-p ,instance)
+                        (let ((w (std-instance-wrapper ,instance)))
+                          (if (layout-for-std-class-p w)
+                              (values w (std-instance-slots ,instance))
+                              (miss))))
+                       ((fsc-instance-p ,instance)
+                        (let ((w (fsc-instance-wrapper ,instance)))
+                          (if (layout-for-std-class-p w)
+                              (values w (fsc-instance-slots ,instance))
+                          (miss))))
+                       (t
+                        (miss)))
+                `(cond ((std-instance-p ,instance)
+                        (let ((w (std-instance-wrapper ,instance)))
+                          (if (layout-for-std-class-p w)
+                              w
+                              (miss))))
+                       ((fsc-instance-p ,instance)
+                        (let ((w (fsc-instance-wrapper ,instance)))
+                          (if (layout-for-std-class-p w)
+                              w
+                          (miss))))
+                       (t
+                        (miss))))
+         ,@(ecase check
+             (:check `((when (invalid-wrapper-p ,wrapper)
+                         (miss))))
+             ;; We elide the check when we go to probe-cache next,
+             ;; since it will miss on invalid wrapper.
+             (:probe nil))
+         (return (locally ,@body))))))
+
+;;;; Slot accessors using cached indexes.
+
+(defun make-cached-index-slot-boundp (cache miss-fn)
+  (declare (cache cache)
+           (function miss-fn))
+  (named-lambda cached-index-slot-boundp (instance)
+    (with-wrapper-and-slots-or-miss (:probe wrapper slots miss-fn instance)
+      (let ((layouts (list wrapper)))
+        (declare (dynamic-extent layouts))
+        (let ((index (nth-value 1 (probe-cache cache layouts))))
+          (if index
+              (neq +slot-unbound+ (clos-slots-ref slots index))
+              (miss)))))))
+
+(defun make-cached-index-slot-value (cache miss-fn)
+  (declare (cache cache)
+           (function miss-fn))
+  (named-lambda cached-index-slot-value (instance)
+    (with-wrapper-and-slots-or-miss (:probe wrapper slots miss-fn instance)
+      (let ((layouts (list wrapper)))
+        (declare (dynamic-extent layouts))
+        (let ((index (nth-value 1 (probe-cache cache layouts))))
+          (if index
+              (let ((value (clos-slots-ref slots index)))
+                (if (eq +slot-unbound+ value)
+                    (miss)
+                    value))
+              (miss)))))))
+
+(defun make-cached-index-setf-slot-value (cache miss-fn)
+  (declare (cache cache)
+           (function miss-fn))
+  (named-lambda cached-index-setf-slot-value (value instance)
+    (with-wrapper-and-slots-or-miss (:probe wrapper slots miss-fn instance value)
+       (let ((layouts (list wrapper)))
+         (declare (dynamic-extent layouts))
+         (let ((index (nth-value 1 (probe-cache cache layouts))))
+           (if index
+               (setf (clos-slots-ref slots index) value)
+               (miss)))))))
+
+;;;; Slot accessors with caches, for class slots
+
+(defun make-cached-class-slot-boundp (cache cell miss-fn)
+  (declare (cache cache)
+           (cons cell)
+           (function miss-fn))
+  (named-lambda cached-class-slot-boundp (instance)
+    (with-wrapper-and-slots-or-miss (:probe wrapper nil miss-fn instance)
+      (let ((layouts (list wrapper)))
+        (declare (dynamic-extent layouts))
+        (if (probe-cache cache layouts)
+            (neq +slot-unbound+ (cdr cell))
+            (miss))))))
+
+(defun make-cached-class-slot-value (cache cell miss-fn)
+  (declare (cache cache)
+           (cons cell)
+           (function miss-fn))
+  (named-lambda cached-class-slot-value (instance)
+    (with-wrapper-and-slots-or-miss (:probe wrapper nil miss-fn instance)
+      (let ((layouts (list wrapper)))
+        (declare (dynamic-extent layouts))
+        (if (probe-cache cache layouts)
+            (let ((value (cdr cell)))
+              (if (eq +slot-unbound+ value)
+                  (miss)
+                  value))
+            (miss))))))
+
+(defun make-cached-class-setf-slot-value (cache cell miss-fn)
+  (declare (cache cache)
+           (cons cell)
+           (function miss-fn))
+  (named-lambda cached-class-setf-slot-value (value instance)
+    (with-wrapper-and-slots-or-miss (:probe wrapper nil miss-fn instance value)
+       (let ((layouts (list wrapper)))
+         (declare (dynamic-extent layouts))
+         (if (probe-cache cache layouts)
+             (setf (cdr cell) value)
+             (miss))))))
+
+;;;; Slot accessors with fixed indexes
+
+(defun make-cached-1-index-slot-boundp (cache index miss-fn)
+  (declare (cache cache)
+           (index index)
+           (function miss-fn))
+  (named-lambda cached-1-index-slot-boundp (instance)
+    (with-wrapper-and-slots-or-miss (:probe wrapper slots miss-fn instance)
+      (let ((layouts (list wrapper)))
+        (declare (dynamic-extent layouts))
+        (if (probe-cache cache layouts)
+            (neq +slot-unbound+ (clos-slots-ref slots index))
+            (miss))))))
+
+(defun make-cached-1-index-slot-value (cache index miss-fn)
+  (declare (cache cache)
+           (index index)
+           (function miss-fn))
+  (named-lambda cached-1-index-slot-value (instance)
+    (with-wrapper-and-slots-or-miss (:probe wrapper slots miss-fn instance)
+      (let ((layouts (list wrapper)))
+        (declare (dynamic-extent layouts))
+        (if (probe-cache cache layouts)
+            (let ((value (clos-slots-ref slots index)))
+              (if (eq +slot-unbound+ value)
+                  (miss)
+                  value))
+            (miss))))))
+
+(defun make-cached-1-index-setf-slot-value (cache index miss-fn)
+  (declare (cache cache)
+           (index index)
+           (function miss-fn))
+  (named-lambda cached-1-index-setf-slot-value (value instance)
+    (with-wrapper-and-slots-or-miss (:probe wrapper slots miss-fn instance value)
+       (let ((layouts (list wrapper)))
+         (declare (dynamic-extent layouts))
+         (if (probe-cache cache layouts)
+             (setf (clos-slots-ref slots index) value)
+             (miss))))))
+
+;;;; 1-class class slot accessors
+
+(defun fun-layout-p (layout)
+  (find (load-time-value (find-layout 'function)) (layout-inherits layout)))
+
+(defun make-1-class-class-slot-value (wrapper-0 cell miss-fn)
+  (declare (function miss-fn)
+           (cons cell))
+  (cond ((not (layout-for-std-class-p wrapper-0))
+         miss-fn)
+        ((fun-layout-p wrapper-0)
+         (named-lambda 1-class-fsc-class-slot-value (instance)
+           (block nil
+             (when (and (fsc-instance-p instance)
+                        (eq wrapper-0 (fsc-instance-wrapper instance))
+                        (not (invalid-wrapper-p wrapper-0)))
+                  (let ((value (cdr cell)))
+                    (unless (eq +slot-unbound+ value)
+                      (return value))))
+             (return (funcall miss-fn instance)))))
+        (t
+         (named-lambda 1-class-std-class-slot-value (instance)
+           (block nil
+             (when (and (std-instance-p instance)
+                        (eq wrapper-0 (std-instance-wrapper instance))
+                        (not (invalid-wrapper-p wrapper-0)))
+               (let ((value (cdr cell)))
+                 (unless (eq +slot-unbound+ value)
+                   (return value))))
+             (return (funcall miss-fn instance)))))))
+
+(defun make-1-class-setf-class-slot-value (wrapper-0 cell miss-fn)
+  (declare (function miss-fn)
+           (cons cell))
+  (cond ((not (layout-for-std-class-p wrapper-0))
+         miss-fn)
+        ((fun-layout-p wrapper-0)
+         (named-lambda 1-class-fsc-setf-class-slot-value (value instance)
+           (if (and (fsc-instance-p instance)
+                    (eq wrapper-0 (fsc-instance-wrapper instance))
+                    (not (invalid-wrapper-p wrapper-0)))
+               (setf (cdr cell) value)
+               (funcall miss-fn value instance))))
+        (t
+         (named-lambda 1-class-std-setf-class-slot-value (value instance)
+           (if (and (stf-instance-p instance)
+                    (eq wrapper-0 (std-instance-wrapper instance)))
+               (setf (cdr cell) value)
+               (funcall miss-fn value instance))))))
+
+(defun make-1-class-class-slot-boundp (wrapper-0 cell miss-fn)
+  (declare (function miss-fn)
+           (cons cell))
+  (cond ((not (layout-for-std-class-p wrapper-0))
+         miss-fn)
+        ((fun-layout-p wrapper-0)
+         (named-lambda 1-class-fsc-class-slot-boundp (instance)
+           (if (and (fsc-instance-p instance)
+                    (eq wrapper-0 (fsc-instance-wrapper instance))
+                    (not (invalid-wrapper-p wrapper-0)))
+               (neq +slot-unbound+ (cdr cell))
+               (funcall miss-fn instance))))
+        (t
+         (named-lambda 1-class-fsc-class-slot-boundp (instance)
+           (if (and (fsc-instance-p instance)
+                    (eq wrapper-0 (fsc-instance-wrapper instance))
+                    (not (invalid-wrapper-p wrapper-0)))
+               (neq +slot-unbound+ (cdr cell))
+               (funcall miss-fn instance))))))
+
+;;;; 1-class instance slot accessors
+
+(defun make-1-class-slot-value (wrapper-0 index miss-fn)
+  (declare (function miss-fn)
+           (index index))
+  (cond ((not (layout-for-std-class-p wrapper-0))
+         miss-fn)
+        ((fun-layout-p wrapper-0)
+         (named-lambda 1-class-fsc-slot-value (instance)
+           (block nil
+             (when (and (fsc-instance-p instance)
+                        (eq wrapper-0 (fsc-instance-wrapper instance))
+                        (not (invalid-wrapper-p wrapper-0)))
+               (let ((value (clos-slots-ref
+                             (fsc-instance-slots instance) index)))
+                 (unless (eq +slot-unbound+ value)
+                   (return value))))
+             (return (funcall miss-fn instance)))))
+        (t
+         (named-lambda 1-class-std-slot-value (instance)
+           (block nil
+             (when (and (std-instance-p instance)
+                        (eq wrapper-0 (std-instance-wrapper instance))
+                        (not (invalid-wrapper-p wrapper-0)))
+               (let ((value (clos-slots-ref
+                             (std-instance-slots instance) index)))
+                 (unless (eq +slot-unbound+ value)
+                   (return value))))
+             (return (funcall miss-fn instance)))))))
+
+(defun make-1-class-setf-slot-value (wrapper-0 index miss-fn)
+  (declare (function miss-fn)
+           (index index))
+  (cond ((not (layout-for-std-class-p wrapper-0))
+         miss-fn)
+        ((fun-layout-p wrapper-0)
+         (named-lambda 1-class-fsc-setf-slot-value (value instance)
+           (if (and (fsc-instance-p instance)
+                      (eq wrapper-0 (fsc-instance-wrapper instance))
+                      (not (invalid-wrapper-p wrapper-0)))
+               (setf (clos-slots-ref (fsc-instance-slots instance) index) value)
+               (funcall miss-fn value instance))))
+        (t
+         (named-lambda 1-class-std-setf-slot-value (value instance)
+           (if (and (std-instance-p instance)
+                    (eq wrapper-0 (std-instance-wrapper instance))
+                    (not (invalid-wrapper-p wrapper-0)))
+               (setf (clos-slots-ref (std-instance-slots instance) index) value)
+               (funcall miss-fn value instance))))))
+
+(defun make-1-class-slot-boundp (wrapper-0 index miss-fn)
+  (declare (function miss-fn)
+           (index index))
+  (cond ((not (layout-for-std-class-p wrapper-0))
+         miss-fn)
+        ((fun-layout-p wrapper-0)
+         (named-lambda 1-class-fsc-slot-boundp (instance)
+           (if (and (fsc-instance-p instance)
+                    (eq wrapper-0 (fsc-instance-wrapper instance))
+                    (not (invalid-wrapper-p wrapper-0)))
+               (neq +slot-unbound+
+                    (clos-slots-ref (fsc-instance-slots instance) index))
+               (funcall miss-fn instance))))
+        (t
+         (named-lambda 1-class-std-slot-boundp (instance)
+           (if (and (std-instance-p instance)
+                    (eq wrapper-0 (std-instance-wrapper instance))
+                    (not (invalid-wrapper-p wrapper-0)))
+               (neq +slot-unbound+
+                    (clos-slots-ref (std-instance-slots instance) index))
+               (funcall miss-fn instance))))))
+
+;;;; 2-class class slot accessors
+
+(defun make-2-class-class-slot-value (wrapper-0 wrapper-1 cell miss-fn)
+  (declare (function miss-fn)
+           (cons cell))
+  (named-lambda 2-class-class-slot-value (instance)
+    (with-wrapper-and-slots-or-miss (:check wrapper slots miss-fn instance)
+      (if (or (eq wrapper wrapper-0) (eq wrapper wrapper-1))
+          (let ((value (cdr cell)))
+            (if (eq +slot-unbound+ value)
+                (miss)
+                (return value)))
+          (miss)))))
+
+(defun make-2-class-class-slot-boundp (wrapper-0 wrapper-1 cell miss-fn)
+  (declare (function miss-fn)
+           (cons cell))
+  (named-lambda 2-class-slot-boundp (instance)
+    (with-wrapper-and-slots-or-miss (:check wrapper slots miss-fn instance)
+      (if (or (eq wrapper wrapper-0) (eq wrapper wrapper-1))
+          (neq +slot-unbound+ (cdr cell))
+          (miss)))))
+
+(defun make-2-class-setf-class-slot-value (wrapper-0 wrapper-1 cell miss-fn)
+  (declare (function miss-fn)
+           (cons cell))
+  (named-lambda 2-class-setf-slot-value (value instance)
+    (with-wrapper-and-slots-or-miss (:check wrapper slots miss-fn instance value)
+      (if (or (eq wrapper wrapper-0) (eq wrapper wrapper-1))
+          (setf (cdr cell) value)
+          (miss)))))
+
+;;;; 2-class instance slot accessors
+
+(defun make-2-class-slot-value (wrapper-0 wrapper-1 index miss-fn)
+  (declare (function miss-fn)
+           (index index))
+  (named-lambda 2-class-slot-value (instance)
+    (with-wrapper-and-slots-or-miss (:check wrapper slots miss-fn instance)
+      (if (or (eq wrapper wrapper-0) (eq wrapper wrapper-1))
+          (let ((value (clos-slots-ref slots index)))
+            (if (eq +slot-unbound+ value)
+                (miss)
+                value))
+          (miss)))))
+
+(defun make-2-class-slot-boundp (wrapper-0 wrapper-1 index miss-fn)
+  (declare (function miss-fn)
+           (index index))
+  (named-lambda 2-class-slot-value (instance)
+    (with-wrapper-and-slots-or-miss (:check wrapper slots miss-fn instance)
+      (if (or (eq wrapper wrapper-0) (eq wrapper wrapper-1))
+          (neq +slot-unbound+ (clos-slots-ref slots index))
+          (miss)))))
+
+(defun make-2-class-setf-slot-value (wrapper-0 wrapper-1 index miss-fn)
+  (declare (function miss-fn)
+           (index index))
+  (named-lambda 2-class-setf-slot-value (value instance)
+    (with-wrapper-and-slots-or-miss (:check wrapper slots miss-fn instance value)
+      (if (or (eq wrapper wrapper-0) (eq wrapper wrapper-1))
+          (setf (clos-slots-ref slots index) value)
+          (miss)))))
 
 ;;; --------------------------------
 
@@ -196,51 +592,72 @@
 ;;; FSC-INSTANCE-P returns true on funcallable structures as well as
 ;;; PCL fins.
 (defun emit-reader/writer (reader/writer 1-or-2-class class-slot-p)
-  (let ((instance nil)
-        (arglist  ())
-        (closure-variables ())
-        (read-form (emit-slot-read-form class-slot-p 'index 'slots)))
-    (ecase reader/writer
-      ((:reader :boundp)
-       (setq instance (dfun-arg-symbol 0)
-             arglist  (list instance)))
-      (:writer (setq instance (dfun-arg-symbol 1)
-                     arglist  (list (dfun-arg-symbol 0) instance))))
-    (ecase 1-or-2-class
-      (1 (setq closure-variables '(wrapper-0 index miss-fn)))
-      (2 (setq closure-variables '(wrapper-0 wrapper-1 index miss-fn))))
-    (generating-lisp
-     closure-variables
-     arglist
-     `(let* (,@(unless class-slot-p `((slots nil)))
-               (wrapper (cond ((std-instance-p ,instance)
-                               ,@(unless class-slot-p
-                                   `((setq slots
-                                           (std-instance-slots ,instance))))
-                               (std-instance-wrapper ,instance))
-                              ((fsc-instance-p ,instance)
-                               ,@(unless class-slot-p
-                                   `((setq slots
-                                           (fsc-instance-slots ,instance))))
-                               (fsc-instance-wrapper ,instance)))))
-        (block access
-          (when (and wrapper
-                     (not (zerop (layout-clos-hash wrapper)))
-                     ,@(if (eql 1 1-or-2-class)
-                           `((eq wrapper wrapper-0))
-                           `((or (eq wrapper wrapper-0)
-                                 (eq wrapper wrapper-1)))))
-            ,@(ecase reader/writer
-                (:reader
-                 `((let ((value ,read-form))
-                     (unless (eq value +slot-unbound+)
-                       (return-from access value)))))
-                (:boundp
-                 `((let ((value ,read-form))
-                     (return-from access (not (eq value +slot-unbound+))))))
-                (:writer
-                 `((return-from access (setf ,read-form ,(car arglist)))))))
-          (funcall miss-fn ,@arglist))))))
+  (cond ((generate-lisp-p)
+         (let ((instance nil)
+               (arglist  ())
+               (closure-variables ())
+               (read-form (emit-slot-read-form class-slot-p 'index 'slots)))
+           (ecase reader/writer
+             ((:reader :boundp)
+              (setq instance (dfun-arg-symbol 0)
+                    arglist  (list instance)))
+             (:writer (setq instance (dfun-arg-symbol 1)
+                            arglist  (list (dfun-arg-symbol 0) instance))))
+           (ecase 1-or-2-class
+             (1 (setq closure-variables '(wrapper-0 index miss-fn)))
+             (2 (setq closure-variables '(wrapper-0 wrapper-1 index miss-fn))))
+           (generating-lisp
+            closure-variables
+            arglist
+            `(let* (,@(unless class-slot-p `((slots nil)))
+                    (wrapper (cond ((std-instance-p ,instance)
+                                    ,@(unless class-slot-p
+                                        `((setq slots
+                                                (std-instance-slots ,instance))))
+                                    (std-instance-wrapper ,instance))
+                                   ((fsc-instance-p ,instance)
+                                    ,@(unless class-slot-p
+                                        `((setq slots
+                                                (fsc-instance-slots ,instance))))
+                                    (fsc-instance-wrapper ,instance)))))
+               (block access
+                 (when (and wrapper
+                            (not (zerop (layout-clos-hash wrapper)))
+                            ,@(if (eql 1 1-or-2-class)
+                                  `((eq wrapper wrapper-0))
+                                  `((or (eq wrapper wrapper-0)
+                                        (eq wrapper wrapper-1)))))
+                   ,@(ecase reader/writer
+                       (:reader
+                        `((let ((value ,read-form))
+                            (unless (eq value +slot-unbound+)
+                              (return-from access value)))))
+                       (:boundp
+                        `((let ((value ,read-form))
+                            (return-from access (not (eq value +slot-unbound+))))))
+                       (:writer
+                        `((return-from access (setf ,read-form ,(car arglist)))))))
+                 (funcall miss-fn ,@arglist))))))
+        ((eql 1 1-or-2-class)
+         (if class-slot-p
+             (ecase reader/writer
+               (:reader #'make-1-class-class-slot-value)
+               (:boundp #'make-1-class-class-slot-boundp)
+               (:writer #'make-1-class-setf-class-slot-value))
+             (ecase reader/writer
+               (:reader #'make-1-class-slot-value)
+               (:boundp #'make-1-class-slot-boundp)
+               (:writer #'make-1-class-setf-slot-value))))
+        ((eql 2 1-or-2-class)
+         (if class-slot-p
+             (ecase reader/writer
+               (:reader #'make-2-class-class-slot-value)
+               (:boundp #'make-2-class-class-slot-boundp)
+               (:writer #'make-2-class-class-setf-slot-value))
+             (ecase reader/writer
+               (:reader #'make-2-class-slot-value)
+               (:boundp #'make-2-class-slot-boundp)
+               (:writer #'make-2-class-setf-slot-value))))))
 
 (defun emit-slot-read-form (class-slot-p index slots)
   (if class-slot-p
@@ -269,24 +686,45 @@
 (defun emit-one-or-n-index-reader/writer (reader/writer
                                           cached-index-p
                                           class-slot-p)
-  (multiple-value-bind (arglist metatypes)
-      (ecase reader/writer
-        ((:reader :boundp)
-         (values (list (dfun-arg-symbol 0))
-                 '(standard-instance)))
-        (:writer (values (list (dfun-arg-symbol 0) (dfun-arg-symbol 1))
-                         '(t standard-instance))))
-    (generating-lisp
-     `(cache ,@(unless cached-index-p '(index)) miss-fn)
-     arglist
-     `(let (,@(unless class-slot-p '(slots))
-            ,@(when cached-index-p '(index)))
-        ,(emit-dlap 'cache arglist metatypes
-                    (emit-slot-access reader/writer class-slot-p
-                                      'slots 'index 'miss-fn arglist)
-                    `(funcall miss-fn ,@arglist)
-                    (when cached-index-p 'index)
-                    (unless class-slot-p '(slots)))))))
+  ;; Theoretically we could do this too, I guess, but right
+  ;; now we don't.
+  (aver (not (and cached-index-p class-slot-p)))
+  (cond ((generate-lisp-p)
+         (multiple-value-bind (arglist metatypes)
+             (ecase reader/writer
+               ((:reader :boundp)
+                (values (list (dfun-arg-symbol 0))
+                        '(standard-instance)))
+               (:writer (values (list (dfun-arg-symbol 0) (dfun-arg-symbol 1))
+                                '(t standard-instance))))
+           (generating-lisp
+            `(cache ,@(unless cached-index-p '(index)) miss-fn)
+            arglist
+            `(let (,@(unless class-slot-p '(slots))
+                   ,@(when cached-index-p '(index)))
+               ,(emit-dlap 'cache arglist metatypes
+                           (emit-slot-access reader/writer class-slot-p
+                                             'slots 'index 'miss-fn arglist)
+                           `(funcall miss-fn ,@arglist)
+                           (when cached-index-p 'index)
+                           (unless class-slot-p '(slots)))))))
+        ((eq :writer reader/writer)
+         (cond
+           (cached-index-p #'make-cached-index-setf-slot-value)
+           (class-slot-p   #'make-cached-class-setf-slot-value)
+           (t              #'make-cached-1-index-setf-slot-value)))
+        ((eq :boundp reader/writer)
+         (cond
+           (cached-index-p #'make-cached-index-slot-boundp)
+           (class-slot-p   #'make-cached-class-slot-boundp)
+           (t              #'make-cached-1-index-slot-boundp)))
+        ((eq :reader reader/writer)
+         (cond
+           (cached-index-p #'make-cached-index-slot-value)
+           (class-slot-p   #'make-cached-class-slot-value)
+           (t              #'make-cached-1-index-slot-value)))
+        (t
+         (bug "Bogus reader/writer: ~S" reader/writer))))
 
 (defmacro emit-one-or-n-index-reader/writer-macro
     (reader/writer cached-index-p class-slot-p)
@@ -305,22 +743,83 @@
       `(funcall ,miss-fn ,@args)))
 
 (defun emit-checking-or-caching (cached-emf-p return-value-p metatypes applyp)
-  (multiple-value-bind (lambda-list args rest-arg more-arg)
-      (make-dlap-lambda-list (length metatypes) applyp)
-    (generating-lisp
-     `(cache ,@(unless cached-emf-p '(emf)) miss-fn)
-     lambda-list
-     `(let (,@(when cached-emf-p '(emf)))
-        ,(emit-dlap 'cache args metatypes
-                    (if return-value-p
-                        (if cached-emf-p 'emf t)
-                        `(invoke-effective-method-function
-                          emf ,applyp
-                          :required-args ,args
-                          :more-arg ,more-arg
-                          :rest-arg ,rest-arg))
-                    (emit-miss 'miss-fn args applyp)
-                    (when cached-emf-p 'emf))))))
+  (cond ((generate-lisp-p)
+         (multiple-value-bind (lambda-list args rest-arg more-arg)
+             (make-dlap-lambda-list (length metatypes) applyp)
+           (generating-lisp
+            `(cache ,@(unless cached-emf-p '(emf)) miss-fn)
+            lambda-list
+            `(let (,@(when cached-emf-p '(emf)))
+               ,(emit-dlap 'cache args metatypes
+                           (if return-value-p
+                               (if cached-emf-p 'emf t)
+                               `(invoke-effective-method-function
+                                 emf ,applyp
+                                 :required-args ,args
+                                 :more-arg ,more-arg
+                                 :rest-arg ,rest-arg))
+                           (emit-miss 'miss-fn args applyp)
+                           (when cached-emf-p 'emf))))))
+        (cached-emf-p
+         (if return-value-p
+             (lambda (cache miss-fn)
+               (declare (function miss-fn))
+               (named-lambda cached-emf-getter (&rest args)
+                 (declare #.*optimize-speed*)
+                 (declare (dynamic-extent args))
+                 (with-dfun-wrappers (args metatypes)
+                     (dfun-wrappers invalid-wrapper-p)
+                     (apply miss-fn args)
+                   (if invalid-wrapper-p
+                       (apply miss-fn args)
+                       (multiple-value-bind (ok emf) (probe-cache cache dfun-wrappers)
+                         (if ok
+                             emf
+                             (apply miss-fn args)))))))
+             (lambda (cache miss-fn)
+               (declare (type function miss-fn))
+               (named-lambda cached-emf-dispatch (&rest args)
+                 (declare #.*optimize-speed*)
+                 (declare (dynamic-extent args))
+                 (with-dfun-wrappers (args metatypes)
+                     (dfun-wrappers invalid-wrapper-p)
+                     (apply miss-fn args)
+                   (if invalid-wrapper-p
+                       (apply miss-fn args)
+                       (multiple-value-bind (ok emf) (probe-cache cache dfun-wrappers)
+                         (if ok
+                             (invoke-emf emf args)
+                             (apply miss-fn args)))))))))
+        (t
+         (if return-value-p
+             (lambda (cache emf miss-fn)
+               (declare (type function miss-fn))
+               (named-lambda checking-emf-getter (&rest args)
+                 (declare #.*optimize-speed*)
+                 (declare (dynamic-extent args))
+                 (with-dfun-wrappers (args metatypes)
+                     (dfun-wrappers invalid-wrapper-p)
+                     (apply miss-fn args)
+                   (if invalid-wrapper-p
+                       (apply miss-fn args)
+                       (let ((found-p (probe-cache cache dfun-wrappers)))
+                         (if found-p
+                             emf
+                             (apply miss-fn args)))))))
+             (lambda (cache emf miss-fn)
+               (declare (function miss-fn))
+               (named-lambda checking-emf-dispatch (&rest args)
+                 (declare #.*optimize-speed*)
+                 (declare (dynamic-extent args))
+                 (with-dfun-wrappers (args metatypes)
+                     (dfun-wrappers invalid-wrapper-p)
+                     (apply miss-fn args)
+                   (if invalid-wrapper-p
+                       (apply miss-fn args)
+                       (let ((found-p (probe-cache cache dfun-wrappers)))
+                         (if found-p
+                             (invoke-emf emf args)
+                             (apply miss-fn args)))))))))))
 
 (defmacro emit-checking-or-caching-macro (cached-emf-p
                                           return-value-p
