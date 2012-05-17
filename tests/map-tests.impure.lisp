@@ -21,6 +21,36 @@
 (assertoid (map 'list #'+ #(1 2) '(100) #(0) #(100 100))
            :expected-equal '(201))
 
+;;; tests of MAP-INTO
+
+(assertoid (map-into (vector) #'+ '(1 2 3) '(30 20))
+           :expected-equalp #())
+(assertoid (map-into (vector 99) #'+ '(1 2 3) '(30 20))
+           :expected-equalp #(31))
+(assertoid (map-into (vector 99 88) #'+ '(1 2 3) '(30 20))
+           :expected-equalp #(31 22))
+(assertoid (map-into (vector 99 88 77) #'+ '(1 2 3) '(30 20))
+           :expected-equalp #(31 22 77))
+
+(assertoid (map-into (list) #'+ '(1 2 3) '(30 20))
+           :expected-equalp '())
+(assertoid (map-into (list 99) #'+ '(1 2 3) '(30 20))
+           :expected-equalp '(31))
+(assertoid (map-into (list 99 88) #'+ '(1 2 3) '(30 20))
+           :expected-equalp '(31 22))
+(assertoid (map-into (list 99 88 77) #'+ '(1 2 3) '(30 20))
+           :expected-equalp '(31 22 77))
+
+(assertoid (map-into (vector 99 99 99) (constantly 5))
+           :expected-equalp #(5 5 5))
+(assertoid (map-into (vector 99 99 99) (let ((x 0)) (lambda () (incf x))))
+           :expected-equalp #(1 2 3))
+
+(assertoid (map-into (list 99 99 99) (constantly 5))
+           :expected-equalp '(5 5 5))
+(assertoid (map-into (list 99 99 99) (let ((x 0)) (lambda () (incf x))))
+           :expected-equalp '(1 2 3))
+
 (defmacro with-mapnil-test-fun (fun-name &body body)
   `(let ((reversed-result nil))
      (flet ((,fun-name (&rest rest)
@@ -82,7 +112,11 @@
             (arrange
              `(assertoid (map ',result-type ,fun ,@(args-with-type-decls))
                          :expected-equalp (coerce ,result-seq
-                                                  ',result-type)))))
+                                                  ',result-type))))
+          (arrange
+           `(assertoid (map-into (fill (copy-seq ,result-seq) 9999)
+                                 ,fun ,@(args-with-type-decls))
+                       :expected-equalp ,result-seq)))
         (arrange
          `(assertoid (mapcar (lambda (args) (apply #',fun-name args))
                              (with-mapnil-test-fun mtf
