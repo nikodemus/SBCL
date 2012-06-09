@@ -367,6 +367,25 @@
                new-value :lock)
          (move value rax)))))
 
+(defmacro define-fixnum-atomic-incf
+    (name type offset lowtag &optional translate)
+  `(progn
+     (define-vop (,name)
+         ,@(when translate `((:translate ,translate)))
+       (:policy :fast-safe)
+       (:args (object :scs (descriptor-reg) :to :eval)
+              (index :scs (any-reg) :to :result)
+              (delta :scs (any-reg) :target value))
+       (:arg-types ,type tagged-num tagged-num)
+       (:results (value :scs (any-reg)))
+       (:result-types tagged-num)
+       (:generator 5
+         (inst xadd (make-ea :qword :base object :index index
+                                    :scale (ash 1 (- word-shift n-fixnum-tag-bits))
+                                    :disp (- (* ,offset n-word-bytes) ,lowtag))
+               delta :lock)
+         (move value delta)))))
+
 (defmacro define-full-reffer (name type offset lowtag scs el-type &optional translate)
   `(progn
      (define-vop (,name)

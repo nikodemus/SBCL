@@ -461,6 +461,10 @@
   instance-slots-offset instance-pointer-lowtag
   (any-reg descriptor-reg) *
   %compare-and-swap-instance-ref)
+
+(define-fixnum-atomic-incf %instance-atomic-incf/fixnum instance
+  instance-slots-offset instance-pointer-lowtag
+  %instance-atomic-incf/fixnum)
 
 ;;;; code object frobbing
 

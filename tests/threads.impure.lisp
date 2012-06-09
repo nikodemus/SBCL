@@ -567,6 +567,9 @@
 (defstruct counter (n 0 :type sb-vm:word))
 (defvar *interrupt-counter* (make-counter))
 
+(defstruct fcounter (n 0 :type fixnum))
+(defvar *interrupt-fcounter* (make-fcounter))
+
 (declaim (notinline check-interrupt-count))
 (defun check-interrupt-count (i)
   (declare (optimize (debug 1) (speed 1)))
@@ -574,7 +577,7 @@
   (unless (typep i 'fixnum)
     (error "!!!!!!!!!!!")))
 
-(with-test (:name (:interrupt-thread :interrupt-ATOMIC-INCF))
+(with-test (:name (:interrupt-thread :interrupt-atomic-incf))
   (let ((c (make-thread
             (lambda ()
               (handler-bind ((error #'(lambda (cond)
@@ -595,7 +598,50 @@
       (terminate-thread c)
       (wait-for-threads (list c)))))
 
+(with-test (:name (:interrupt-thread :interrupt-atomic-incf :fixnum))
+  (let ((c (make-thread
+            (lambda ()
+              (handler-bind ((error #'(lambda (cond)
+                                        (princ cond)
+                                        (sb-debug:backtrace
+                                         most-positive-fixnum))))
+                (loop (check-interrupt-count
+                       (fcounter-n *interrupt-fcounter*))))))))
+    (let ((func (lambda ()
+                  (princ ".")
+                  (force-output)
+                  (sb-ext:atomic-incf (fcounter-n *interrupt-counter*)))))
+      (setf (fcounter-n *interrupt-fcounter*) 0)
+      (dotimes (i 100)
+        (sleep (random 0.1d0))
+        (interrupt-thread c func))
+      (loop until (= (fcounter-n *interrupt-counter*) 100) do (sleep 0.1))
+      (terminate-thread c)
+      (wait-for-threads (list c)))))
+
 (format t "~&interrupt count test done~%")
+
+(with-test (:name (:atomic-incf :word))
+  (let ((x (make-counter)))
+    (mapc #'sb-thread:join-thread
+          (loop repeat 1000
+                collect (sb-thread:make-thread
+                         (lambda ()
+                           (loop repeat 1000
+                                 do (atomic-incf (counter-n c))
+                                    (sleep 0.00001))))))
+    (assert (= (counter-n x) 1000000))))
+
+(with-test (:name (:atomic-incf :fixnum))
+  (let ((x (make-fcounter)))
+    (mapc #'sb-thread:join-thread
+          (loop repeat 1000
+                collect (sb-thread:make-thread
+                         (lambda ()
+                           (loop repeat 1000
+                                 do (atomic-incf (fcounter-n c))
+                                    (sleep 0.00001))))))
+    (assert (= (fcounter-n x) 1000000))))
 
 (defvar *runningp* nil)
 

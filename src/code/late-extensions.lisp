@@ -86,9 +86,106 @@
                    sb!vm:n-word-bytes)
                 sb!vm:instance-pointer-lowtag)))))))
 
+;;;; ATOMIC-FIXNUM-INCF and ATOMIC-FIXNUM-DECF
+
+(defun expand-atomic-fixnum-frob (name place diff)
+  (flet ((invalid-place ()
+           (error "Invalid first argument to ~S: ~S" name place))
+         (compute-fixnum (&optional (old 0))
+           `(sb!c::mask-signed-field #.(1- sb!vm:n-word-bits)
+                                     (ecase name
+                                       (atomic-fixnum-incf
+                                        `(+ ,old (the fixnum ,diff)))
+                                       (atomic-fixnum-decf
+                                        `(- ,old (the fixnum ,diff)))))))
+    (unless (consp place)
+      (invalid-place))
+    (destructuring-bind (op &rest args) place
+      (case op
+        (aref
+         (when (cddr args)
+           (invalid-place))
+         (error "~@<~S not supported on arrays at the moment, use ~
+                 ~S instead."
+                   name (if (eq 'atomic-fixnum-incf)
+                            'atomic-word-incf
+                            'atomic-word-decf)))
+        (t
+         (when (cdr args)
+           (invalid-place))
+         (multiple-value-bind (structure type read-only raw index)
+             (%structure-accessor-info op)
+           (cond (structure
+                  (when read-only
+                    (error "~@<Cannot use ~S with structure accessor for a read-only slot: ~
+                            ~S~:@>"
+                           name place))
+                  (unless (and (not raw)
+                               (type= (specifier-type type) (specifier-type 'fixnum)))
+                    (error "~@<~S requires a slot of type FIXNUM, not ~S: ~S~:@>"
+                           name sb!vm:n-word-bits type place))
+                  #!+(or x86 x86-64)
+                  `(truly-the fixnum
+                              (%instance-atomic-fixnum-incf
+                               (the ,structure ,@args) ,index
+                               ,(compute-fixnum)))
+                  #!-(or x86 x86-64)
+                  ;; FIXME: We should be able to implement this more
+                  ;; directly on PPC, but Nikodemus ran out of steam.
+                  (with-unique-names (structure old)
+                    #!+ppc
+                    `(loop with ,structure = ,@args
+                           with ,old of-type fixnum = (,op ,structure)
+                           until (eq ,old (cas (,op ,structure)
+                                               ,old ,(compute-fixnum old)))
+                           finally (return ,old))
+                    #!-ppc
+                    (with-unique-names (structure old)
+                      `(sb!sys:without-interrupts
+                         (let* ((,structure ,@args)
+                                (,old (,op ,structure)))
+                           (setf (,op ,structure) ,(compute-fixnum old))
+                           ,old))))))
+           (t
+            (invalid-place))))))))
+
+(defmacro atomic-fixnum-incf (place &optional (diff 1))
+  #!+sb-doc
+  "Atomically increments PLACE by DIFF, and returns the value of PLACE before
+the increment.
+
+The incrementation is done using fixnum-size signed modular arithmetic:
+ATOMIC-FIXNUM-INCF of MOST-POSITIVE-FIXNUM by one results in
+MOST-NEGATIVE-FIXNUM being stored in PLACE.
+
+PLACE must be a DEFSTRUCT accessor for a slot whose declared type is FIXNUM.
+
+DIFF defaults to 1, and must be a FIXNUM.
+
+See also: ATOMIC-FIXNUM-DECF, ATOMIC-UPDATE, ATOMIC-WORD-DECF, and
+ATOMIC-WORD-INCF."
+  (expand-atomic-fixnum-frob 'atomic-fixnum-incf place diff))
+
+(defmacro atomic-fixnum-decf (place &optional (diff 1))
+  #!+sb-doc
+  "Atomically decrements PLACE by DIFF, and returns the value of PLACE before
+the decrement.
+
+The incrementation is done using fixnum-size signed modular arithmetic:
+ATOMIC-FIXNUM-DECF of MOST-NEGATIVE-FIXNUM by one results in
+MOST-POSITIVE-FIXNUM being stored in PLACE.
+
+PLACE must be a DEFSTRUCT accessor for a slot whose declared type is FIXNUM.
+
+DIFF defaults to 1, and must be a FIXNUM.
+
+See also: ATOMIC-FIXNUM-INCF, ATOMIC-UPDATE, ATOMIC-WORD-DECF, and
+ATOMIC-WORD-INCF."
+  (expand-atomic-fixnum-frob 'atomic-fixnum-incf place diff))
+
 ;;;; ATOMIC-WORD-INCF and ATOMIC-WORD-DECF
 
-(defun expand-atomic-frob (name place diff)
+(defun expand-atomic-word-frob (name place diff)
   (flet ((invalid-place ()
            (error "Invalid first argument to ~S: ~S" name place))
          (compute-word (&optional (old 0))
@@ -124,34 +221,33 @@
         (t
          (when (cdr args)
            (invalid-place))
-         (let ((dd (info :function :structure-accessor op)))
-           (if dd
-               (let* ((structure (dd-name dd))
-                      (slotd (find op (dd-slots dd) :key #'dsd-accessor-name))
-                      (index (dsd-index slotd))
-                      (type (dsd-type slotd)))
-                 (declare (ignorable structure index))
-                 (unless (and (eq 'sb!vm:word (dsd-raw-type slotd))
-                              (type= (specifier-type type) (specifier-type 'sb!vm:word)))
-                   (error "~S requires a slot of type (UNSIGNED-BYTE ~S), not ~S: ~S"
-                          name sb!vm:n-word-bits type place))
-                 (when (dsd-read-only slotd)
-                   (error "Cannot use ~S with structure accessor for a read-only slot: ~S"
-                          name place))
-                 #!+(or x86 x86-64 ppc)
-                 `(truly-the sb!vm:word
-                             (%raw-instance-atomic-word-incf
-                              (the ,structure ,@args) ,index
-                              ,(compute-word)))
-                 ;; No threads outside x86 and x86-64 for now, so this is easy...
-                 #!-(or x86 x86-64 ppc)
-                 (with-unique-names (structure old)
-                   `(sb!sys:without-interrupts
-                      (let* ((,structure ,@args)
-                             (,old (,op ,structure)))
-                        (setf (,op ,structure) ,(compute-word old))
-                        ,old))))
-             (invalid-place))))))))
+         (multiple-value-bind (structure type read-only raw index)
+             (%structure-accessor-info op)
+           (cond (structure
+                  (when read-only
+                    (error "~@<Cannot use ~S with structure accessor for a read-only slot: ~
+                            ~S~:@>"
+                           name place))
+                  (unless (and raw
+                               (type= (specifier-type type) (specifier-type 'sb!vm:word)))
+                    (error "~@<~S requires a slot of type SB-EXT:WORD, aka ~
+                            (UNSIGNED-BYTE ~S), not ~S: ~S~:@>"
+                           name sb!vm:n-word-bits type place))
+                  #!+(or x86 x86-64 ppc)
+                  `(truly-the sb!vm:word
+                              (%raw-instance-atomic-word-incf
+                               (the ,structure ,@args) ,index
+                               ,(compute-word)))
+                  ;; No threads outside x86 and x86-64 for now, so this is easy...
+                  #!-(or x86 x86-64 ppc)
+                  (with-unique-names (structure old)
+                    `(sb!sys:without-interrupts
+                       (let* ((,structure ,@args)
+                              (,old (,op ,structure)))
+                         (setf (,op ,structure) ,(compute-word old))
+                         ,old))))
+                 (t
+                  (invalid-place)))))))))
 
 (defmacro atomic-word-incf (place &optional (diff 1))
   #!+sb-doc
@@ -162,15 +258,14 @@ The incrementation is done using word-size modular arithmetic: on 32 bit
 platforms ATOMIC-INCF of #xFFFFFFFF by one results in #x0 being stored in
 PLACE.
 
-PLACE must be an accessor form whose CAR is the name of a DEFSTRUCT accessor
-whose declared type is (UNSIGNED-BYTE 32) on 32 bit platforms,
-and (UNSIGNED-BYTE 64) on 64 bit platforms or an AREF of a (SIMPLE-ARRAY
-SB-EXT:WORD (*) -- the type SB-EXT:WORD can be used for this purpose.
+PLACE must be an accessor form for a DEFSTRUCT slot with the declared type of
+SB-EXT:WORD, or an AREF of a (SIMPLE-ARRAY SB-EXT:WORD (*)).
+
+SB-EXT:WORD is (UNSIGNED-BYTE 32) on 32 bit platforms, and (UNSIGNED-BYTE 64)
+on 64 bit platforms.
 
 DIFF defaults to 1, and must be a (SIGNED-BYTE 32) on 32 bit platforms,
-and (SIGNED-BYTE 64) on 64 bit platforms.
-
-EXPERIMENTAL: Interface subject to change."
+and (SIGNED-BYTE 64) on 64 bit platforms."
   (expand-atomic-frob 'atomic-word-incf place diff))
 
 (define-deprecated-macro :early "1.0.57.z" atomic-incf atomic-word-incf
@@ -183,18 +278,16 @@ EXPERIMENTAL: Interface subject to change."
 the increment.
 
 The decrementation is done using word-size modular arithmetic: on 32 bit
-platforms ATOMIC-DECF of #x0 by one results in #xFFFFFFFF being stored in
-PLACE.
+platforms ATOMIC-DECF of 0 by one results in #xFFFFFFFF being stored in PLACE.
 
-PLACE must be an accessor form whose CAR is the name of a DEFSTRUCT accessor
-whose declared type is (UNSIGNED-BYTE 32) on 32 bit platforms,
-and (UNSIGNED-BYTE 64) on 64 bit platforms or an AREF of a (SIMPLE-ARRAY
-SB-EXT:WORD (*) -- the type SB-EXT:WORD can be used for this purpose.
+PLACE must be an accessor form for a DEFSTRUCT slot with the declared type of
+SB-EXT:WORD, or an AREF of a (SIMPLE-ARRAY SB-EXT:WORD (*)).
+
+SB-EXT:WORD is (UNSIGNED-BYTE 32) on 32 bit platforms, and (UNSIGNED-BYTE 64)
+on 64 bit platforms.
 
 DIFF defaults to 1, and must be a (SIGNED-BYTE 32) on 32 bit platforms,
-and (SIGNED-BYTE 64) on 64 bit platforms.
-
-EXPERIMENTAL: Interface subject to change."
+and (SIGNED-BYTE 64) on 64 bit platforms."
   (expand-atomic-frob 'atomic-decf place diff))
 
 (define-deprecated-macro :early "1.0.57.z" atomic-decf atomic-word-decf

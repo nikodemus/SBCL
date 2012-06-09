@@ -12,6 +12,8 @@ changes relative to sbcl-1.0.57:
   * enhancement: SB-INTROPECT:STRUCTURE-ACCESSOR-INFO allows determining which
     structure and slot a structure accessor accesses, and the type and
     possible read-only status of that slot.
+  * enhancement: SB-EXT:ATOMIC-INCF and SB-EXT:ATOMIC-DECF can now be also
+    used on defstructs slots of type FIXNUM.
   * optimization: On x86-64, code alignment of block headers is done with
     multi-byte NOPs now instead of repetitions of the single-byte NOP.
   * optimization: MAP-INTO is substantially faster when the target sequence is

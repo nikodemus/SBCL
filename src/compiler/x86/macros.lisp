@@ -422,6 +422,36 @@
            (inst cmpxchg ea new-value :lock))
          (move value eax)))))
 
+(defmacro define-fixnum-atomic-incf
+    (name type offset lowtag &optional translate)
+  `(progn
+     (define-vop (,name)
+         ,@(when translate `((:translate ,translate)))
+       (:policy :fast-safe)
+       (:args (object :scs (descriptor-reg) :to :eval)
+              (index :scs (any-reg immediate unsigned-reg) :to :result)
+              (delta :scs (any-reg) :target value))
+       (:arg-types ,type tagged-num tagged-num)
+       (:results (value :scs (any-reg)))
+       (:result-types tagged-num)
+       (:generator 5
+         (let ((ea (sc-case index
+                     (immediate
+                      (make-ea :dword :base object
+                                      :disp (- (* (+ ,offset (tn-value index))
+                                                  n-word-bytes)
+                                               ,lowtag)))
+                     (unsigned-reg
+                      (make-ea :dword :base object :index index :scale 4
+                                      :disp (- (* ,offset n-word-bytes)
+                                               ,lowtag)))
+                     (t
+                      (make-ea :dword :base object :index index
+                                      :disp (- (* ,offset n-word-bytes)
+                                               ,lowtag))))))
+           (inst xadd ea delta :lock))
+         (move value delta)))))
+
 (defmacro define-full-reffer (name type offset lowtag scs el-type &optional translate)
   `(progn
      (define-vop (,name)
