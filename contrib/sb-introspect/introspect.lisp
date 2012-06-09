@@ -46,6 +46,7 @@
            "FIND-FUNCTION-CALLEES"
            "FIND-FUNCTION-CALLERS"
            "MAP-ROOT"
+           "STRUCTURE-ACCESSOR-INFO"
            "WHO-BINDS"
            "WHO-CALLS"
            "WHO-REFERENCES"
@@ -500,6 +501,13 @@ value."
          (if type
              type
              (sb-impl::%fun-type function-designator)))))))
+
+(defun structure-accessor-info (fname)
+  "If FNAME is the name of a DEFSTRUCT generated accessor, returns the name of
+the structure class it is associated with, name of the slot it accesses, the
+declared type of the slot, and a boolean which is true if the slot is read-only."
+  (multiple-value-bind (class slot type read-only) (sb-impl::%structure-accessor-info fname)
+    (values class slot type read-only)))
 
 ;;; FIXME: These three are pretty terrible. Can we place have some proper metadata
 ;;; instead.

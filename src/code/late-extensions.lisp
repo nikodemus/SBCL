@@ -46,6 +46,19 @@
             (:copier nil))
   string)
 
+(defun %structure-accessor-info (fname)
+  (let ((dd (info :function :structure-accessor fname)))
+    (when dd
+      (let* ((structure (dd-name dd))
+             (slotd (find fname (dd-slots dd) :key #'dsd-accessor-name)))
+        (when slotd
+          (values structure
+                  (dsd-name slotd)
+                  (dsd-type slotd)
+                  (dsd-read-only slotd)
+                  (neq t (dsd-raw-type slotd))
+                  (dsd-index slotd)))))))
+
 ;;; Used internally, but it would be nice to provide something
 ;;; like this for users as well.
 ;;;
