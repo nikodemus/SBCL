@@ -561,8 +561,8 @@
 
 ;;;; ATOMIC-INCF for arrays
 
-(define-vop (array-atomic-incf/word)
-  (:translate %array-atomic-incf/word)
+(define-vop (array-atomic-word-incf)
+  (:translate %array-atomic-word-incf)
   (:policy :fast-safe)
   (:args (object :scs (descriptor-reg))
          (index :scs (any-reg) :target offset)

@@ -515,8 +515,8 @@
   (:generator 4
     (inst stw value object (offset-for-raw-slot instance-length index 1))))
 
-(define-vop (raw-instance-atomic-incf/word)
-  (:translate %raw-instance-atomic-incf/word)
+(define-vop (raw-instance-atomic-word-incf)
+  (:translate %raw-instance-atomic-word-incf)
   (:policy :fast-safe)
   (:args (object :scs (descriptor-reg))
          (index :scs (any-reg))

@@ -164,10 +164,10 @@
   (always-translatable))
 
 #!+(or x86 x86-64 ppc)
-(defknown %raw-instance-atomic-incf/word (instance index sb!vm:word) sb!vm:word
+(defknown %raw-instance-atomic-word-incf (instance index sb!vm:word) sb!vm:word
     (always-translatable))
 #!+(or x86 x86-64 ppc)
-(defknown %array-atomic-incf/word (t index sb!vm:word) sb!vm:word
+(defknown %array-atomic-word-incf (t index sb!vm:word) sb!vm:word
   (always-translatable))
 
 ;;; These two are mostly used for bit-bashing operations.

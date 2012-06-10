@@ -128,6 +128,37 @@ After final deprecation the interface is deleted entirely.
 
 @itemize
 
+@item @strong{SB-EXT:ATOMIC-INCF} and @strong{SB-EXT:ATOMIC-DECF}
+
+Deprecated in favor of @code{sb-ext:atomic-word-incf} and
+@code{sb-ext:atomic-word-decf} as of 1.0.57.xx in June 2012. Expected
+to move into late deprecation in June 2013.
+
+The naming proved unfortunate: since both macros implement word-sized
+modular arithmetic, and we wish to extend support for fixnum slots and
+vectors, it would have been confusing to have the same name implement
+both fixnum modular arithmetic (from @code{most-negative-fixnum} to
+@code{most-positive-fixnum}), and word-sized modular arithmetic (from
+zero to @code{most-positive-word}): a change of slot type in one place
+would then have silently changed the semantics of incrementation
+elsewhere.
+
+@strong{Remedy}
+
+For code needing to work with legacy SBCLs use the following
+conditionalization:
+
+@sp 1
+@lisp
+(defmacro atomic-word-incf (place &optional (diff 1))
+  #+#.(cl:if (cl:find-symbol "ATOMIC-WORD-INCF" :sb-ext) '(and) '(or))
+  `(sb-ext:atomic-word-incf ,place ,diff)
+  #-#.(cl:if (cl:find-symbol "ATOMIC-WORD-INCF" :sb-ext) '(and) '(or))
+  `(sb-ext:atomic-incf ,place ,diff))
+@end lisp
+@sp 1
+
+@sp 1
 @item @strong{SB-EXT:QUIT}
 
 Deprecated in favor of @code{sb-ext:exit} as of 1.0.56.55 in May 2012.

@@ -603,8 +603,8 @@
   (:generator 4
     (inst mov (make-ea-for-raw-slot object instance-length :index index) value)))
 
-(define-vop (raw-instance-atomic-incf-c/word)
-  (:translate %raw-instance-atomic-incf/word)
+(define-vop (raw-instance-atomic-word-incf-c)
+  (:translate %raw-instance-atomic-word-incf)
   (:policy :fast-safe)
   (:args (object :scs (descriptor-reg))
          (diff :scs (unsigned-reg) :target result))

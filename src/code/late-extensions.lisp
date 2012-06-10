@@ -73,11 +73,18 @@
                    sb!vm:n-word-bytes)
                 sb!vm:instance-pointer-lowtag)))))))
 
-;;;; ATOMIC-INCF and ATOMIC-DECF
+;;;; ATOMIC-WORD-INCF and ATOMIC-WORD-DECF
 
 (defun expand-atomic-frob (name place diff)
   (flet ((invalid-place ()
-           (error "Invalid first argument to ~S: ~S" name place)))
+           (error "Invalid first argument to ~S: ~S" name place))
+         (compute-word (&optional (old 0))
+           `(logand #. (1- (ash 1 sb!vm:n-word-bits))
+                    ,(ecase name
+                       (atomic-word-incf
+                        `(+ ,old (the sb!vm:signed-word ,diff)))
+                       (atomic-word-decf
+                        `(- ,old (the sb!vm:signed-word ,diff)))))))
     (unless (consp place)
       (invalid-place))
     (destructuring-bind (op &rest args) place
@@ -88,31 +95,19 @@
          #!+(or x86 x86-64 ppc)
          (with-unique-names (array)
            `(let ((,array (the (simple-array sb!ext:word (*)) ,(car args))))
-              (%array-atomic-incf/word
+              (%array-atomic-word-incf
                ,array
                (%check-bound ,array (array-dimension ,array 0) ,(cadr args))
-               (logand #.(1- (ash 1 sb!vm:n-word-bits))
-                       ,(ecase name
-                               (atomic-incf
-                                `(the sb!vm:signed-word ,diff))
-                               (atomic-decf
-                                `(- (the sb!vm:signed-word ,diff))))))))
+               ,(compute-word))))
          #!-(or x86 x86-64 ppc)
-         (with-unique-names (array index old-value)
-           (let ((incremented-value
-                  (ecase name
-                         (atomic-incf
-                          `(+ ,old-value (the sb!vm:signed-word ,diff)))
-                         (atomic-decf
-                          `(- ,old-value (the sb!vm:signed-word ,diff))))))
-             `(sb!sys:without-interrupts
-               (let* ((,array ,(car args))
-                      (,index ,(cadr args))
-                      (,old-value (aref ,array ,index)))
-                 (setf (aref ,array ,index)
-                       (logand #.(1- (ash 1 sb!vm:n-word-bits))
-                               ,incremented-value))
-                 ,old-value)))))
+         (with-unique-names (array index old)
+           `(sb!sys:without-interrupts
+              (let* ((,array ,(car args))
+                     (,index ,(cadr args))
+                     (,old (aref ,array ,index)))
+                (setf (aref ,array ,index)
+                      (logand #.(1- (ash 1 sb!vm:n-word-bits)) ,(compute-word old)))
+                ,old))))
         (t
          (when (cdr args)
            (invalid-place))
@@ -132,31 +127,20 @@
                           name place))
                  #!+(or x86 x86-64 ppc)
                  `(truly-the sb!vm:word
-                             (%raw-instance-atomic-incf/word
+                             (%raw-instance-atomic-word-incf
                               (the ,structure ,@args) ,index
-                              (logand #.(1- (ash 1 sb!vm:n-word-bits))
-                                      ,(ecase name
-                                              (atomic-incf
-                                               `(the sb!vm:signed-word ,diff))
-                                              (atomic-decf
-                                               `(- (the sb!vm:signed-word ,diff)))))))
+                              ,(compute-word)))
                  ;; No threads outside x86 and x86-64 for now, so this is easy...
                  #!-(or x86 x86-64 ppc)
                  (with-unique-names (structure old)
-                                    `(sb!sys:without-interrupts
-                                      (let* ((,structure ,@args)
-                                             (,old (,op ,structure)))
-                                        (setf (,op ,structure)
-                                              (logand #.(1- (ash 1 sb!vm:n-word-bits))
-                                                      ,(ecase name
-                                                              (atomic-incf
-                                                               `(+ ,old (the sb!vm:signed-word ,diff)))
-                                                              (atomic-decf
-                                                               `(- ,old (the sb!vm:signed-word ,diff))))))
-                                        ,old))))
+                   `(sb!sys:without-interrupts
+                      (let* ((,structure ,@args)
+                             (,old (,op ,structure)))
+                        (setf (,op ,structure) ,(compute-word old))
+                        ,old))))
              (invalid-place))))))))
 
-(defmacro atomic-incf (place &optional (diff 1))
+(defmacro atomic-word-incf (place &optional (diff 1))
   #!+sb-doc
   "Atomically increments PLACE by DIFF, and returns the value of PLACE before
 the increment.
@@ -174,9 +158,13 @@ DIFF defaults to 1, and must be a (SIGNED-BYTE 32) on 32 bit platforms,
 and (SIGNED-BYTE 64) on 64 bit platforms.
 
 EXPERIMENTAL: Interface subject to change."
-  (expand-atomic-frob 'atomic-incf place diff))
+  (expand-atomic-frob 'atomic-word-incf place diff))
 
-(defmacro atomic-decf (place &optional (diff 1))
+(define-deprecated-macro :early "1.0.57.z" atomic-incf atomic-word-incf
+    (place &optional (diff 1))
+  `(atomic-word-incf ,place ,diff))
+
+(defmacro atomic-word-decf (place &optional (diff 1))
   #!+sb-doc
   "Atomically decrements PLACE by DIFF, and returns the value of PLACE before
 the increment.
@@ -196,13 +184,17 @@ and (SIGNED-BYTE 64) on 64 bit platforms.
 EXPERIMENTAL: Interface subject to change."
   (expand-atomic-frob 'atomic-decf place diff))
 
-;; Interpreter stubs for ATOMIC-INCF.
+(define-deprecated-macro :early "1.0.57.z" atomic-decf atomic-word-decf
+    (place &optional (diff 1))
+  `(atomic-word-decf ,place ,diff))
+
+;; Interpreter stubs for ATOMIC-WORD-INCF.
 #!+(or x86 x86-64 ppc)
-(defun %array-atomic-incf/word (array index diff)
+(defun %array-atomic-word-incf (array index diff)
   (declare (type (simple-array word (*)) array)
            (fixnum index)
            (type sb!vm:signed-word diff))
-  (%array-atomic-incf/word array index diff))
+  (%array-atomic-word-incf array index diff))
 
 (defun spin-loop-hint ()
   #!+sb-doc

@@ -609,11 +609,14 @@ like *STACK-TOP-HINT* and unsupported stuff like *TRACED-FUN-LIST*."
                "GET-CAS-EXPANSION"
 
                ;; Other atomic operations and types related to them
-               "ATOMIC-INCF"
-               "ATOMIC-DECF"
+               "ATOMIC-WORD-INCF"
+               "ATOMIC-WORD-DECF"
                "ATOMIC-UPDATE"
                "WORD"
                "MOST-POSITIVE-WORD"
+               ;; Deprecated
+               "ATOMIC-INCF"
+               "ATOMIC-DECF"
 
                ;; Not an atomic operation, but should be used with them
                "SPIN-LOOP-HINT"
@@ -1294,7 +1297,7 @@ is a good idea, but see SB-SYS re. blurring of boundaries."
                "%ARRAY-DISPLACEMENT" "%ARRAY-FILL-POINTER"
                "%ARRAY-FILL-POINTER-P" "%ARRAY-RANK"
                #!+(or x86 x86-64 ppc)
-               "%ARRAY-ATOMIC-INCF/WORD"
+               "%ARRAY-ATOMIC-WORD-INCF"
                "%ASSOC"
                "%ASSOC-EQ"
                "%ASSOC-IF"
@@ -1386,7 +1389,7 @@ is a good idea, but see SB-SYS re. blurring of boundaries."
                "%RAW-SET-COMPLEX-SINGLE" "%RAW-SET-DOUBLE"
                "%RAW-SET-LONG" "%RAW-SET-SINGLE" "%SCALB" "%SCALBN"
                #!+(or x86 x86-64 ppc)
-               "%RAW-INSTANCE-ATOMIC-INCF/WORD"
+               "%RAW-INSTANCE-ATOMIC-WORD-INCF"
                "%RAW-INSTANCE-REF/WORD" "%RAW-INSTANCE-SET/WORD"
                "%RAW-INSTANCE-REF/SINGLE" "%RAW-INSTANCE-SET/SINGLE"
                "%RAW-INSTANCE-REF/DOUBLE" "%RAW-INSTANCE-SET/DOUBLE"
