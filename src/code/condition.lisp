@@ -1618,7 +1618,7 @@ the usual naming convention (names like *FOO*) for special variables"
   ((name :initarg :name :reader deprecated-name)
    (replacements :initarg :replacements :reader deprecated-name-replacements)
    (since :initarg :since :reader deprecated-since)
-   (runtime-error :initarg :runtime-error :reader deprecated-name-runtime-error)))
+   (errortime :initarg :error :reader deprecated-name-error)))
 
 (def!method print-object ((condition deprecation-condition) stream)
   (let ((*package* (find-package :keyword)))
@@ -1655,17 +1655,17 @@ the usual naming convention (names like *FOO*) for special variables"
 
 (def!method print-object :after ((warning late-deprecation-warning) stream)
   (unless *print-escape*
-    (when (deprecated-name-runtime-error warning)
+    (awhen (deprecated-name-error warning)
       (let ((*package* (find-package :keyword)))
-        (format stream "~%~@<~:@_In future SBCL versions ~S will signal a runtime error.~:@>"
-                (deprecated-name warning))))))
+        (format stream "~%~@<~:@_In future SBCL versions ~S will signal a ~(~A~) error.~:@>"
+                (deprecated-name warning) it)))))
 
 (define-condition final-deprecation-warning (warning deprecation-condition)
   ())
 
 (def!method print-object :after ((warning final-deprecation-warning) stream)
   (unless *print-escape*
-    (when (deprecated-name-runtime-error warning)
+    (when (eq :runtime (deprecated-name-error warning))
       (let ((*package* (find-package :keyword)))
         (format stream "~%~@<~:@_An error will be signaled at runtime for ~S.~:@>"
                 (deprecated-name warning))))))

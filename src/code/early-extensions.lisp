@@ -1095,14 +1095,22 @@
       (list replacements)
       replacements))
 
+(defun deprecated-docstring (name since replacements)
+  (let ((*package* (find-package :keyword)))
+    (apply #'format nil
+           "~@<~S has been deprecated as of SBCL ~A.~
+            ~#[~; Use ~S instead.~; ~
+                  Use ~S or ~S instead.~:; ~
+                  Use~@{~#[~; or~] ~S~^,~} instead.~]~@:>"
+           name since replacements)))
+
 (defun deprecation-error (since name replacements)
   (error 'deprecation-error
           :name name
           :replacements (normalize-deprecation-replacements replacements)
           :since since))
 
-(defun deprecation-warning (state since name replacements
-                            &key (runtime-error (neq :early state)))
+(defun deprecation-warning (state since name replacements &key compile-time)
   (warn (ecase state
           (:early 'early-deprecation-warning)
           (:late 'late-deprecation-warning)
@@ -1110,7 +1118,10 @@
         :name name
         :replacements (normalize-deprecation-replacements replacements)
         :since since
-        :runtime-error runtime-error))
+        :error (when (neq :early state)
+                 (if compile-time
+                     :compile-time
+                     :runtime))))
 
 (defun deprecated-function (since name replacements)
   (lambda (&rest deprecated-function-args)
@@ -1164,13 +1175,7 @@
 
 (defmacro define-deprecated-function (state since name replacements lambda-list &body body)
   (let* ((replacements (normalize-deprecation-replacements replacements))
-         (doc (let ((*package* (find-package :keyword)))
-                (apply #'format nil
-                       "~@<~S has been deprecated as of SBCL ~A.~
-                        ~#[~; Use ~S instead.~; ~
-                              Use ~S or ~S instead.~:; ~
-                              Use~@{~#[~; or~] ~S~^,~} instead.~]~@:>"
-                       name since replacements))))
+         (doc (deprecated-docstring name since replacements)))
     `(progn
        ,(ecase state
           ((:early :late)
@@ -1185,6 +1190,21 @@
               (setf (documentation ',name 'function) ,doc))))
        (setf (compiler-macro-function ',name)
              (deprecation-compiler-macro ,state ,since ',name ',replacements)))))
+
+(defmacro define-deprecated-macro (state since name replacements lambda-list &body body)
+  (let* ((replacements (normalize-deprecation-replacements replacements))
+         (doc (deprecated-docstring name since replacements)))
+    (ecase state
+      ((:early :late)
+       `(defmacro ,name ,lambda-list
+          ,doc
+          (deprecation-warning ,state ,since ',name ',replacements :compile-time t)
+          ,@body))
+      ((:final)
+       `(progn
+          (setf (macro-function ',name)
+                (deprecated-function ',name ',replacements ,since))
+          (setf (documentation ',name 'function) ,doc))))))
 
 ;;; Anaphoric macros
 (defmacro awhen (test &body body)

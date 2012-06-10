@@ -88,13 +88,12 @@ stale value, use MUTEX-OWNER instead."
 (define-deprecated-function :early "1.0.53.11" release-spinlock release-mutex (lock)
   (release-mutex lock))
 
-(sb!xc:defmacro with-recursive-spinlock ((lock) &body body)
-  (deprecation-warning :early "1.0.53.11" 'with-recursive-spinlock 'with-recursive-lock)
+(define-deprecated-macro :early "1.0.53.11" with-recursive-spinlock with-recursive-lock
+    ((lock) &body body)
   `(with-recursive-lock (,lock)
      ,@body))
 
-(sb!xc:defmacro with-spinlock ((lock) &body body)
-  (deprecation-warning :early "1.0.53.11" 'with-spinlock 'with-mutex)
+(define-deprecated-macro :early "1.0.53.11" with-spinlock with-mutex ((lock) &body body)
   `(with-mutex (,lock)
      ,@body))
 

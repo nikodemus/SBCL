@@ -1020,6 +1020,7 @@ possibly temporariliy, because it might be used internally."
 
                ;; Deprecating stuff
                "DEFINE-DEPRECATED-FUNCTION"
+               "DEFINE-DEPRECATED-MACRO"
                "EARLY-DEPRECATION-WARNING"
                "LATE-DEPRECATION-WARNING"
                "FINAL-DEPRECATION-WARNING"
