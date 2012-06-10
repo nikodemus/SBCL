@@ -492,23 +492,9 @@
   (any-reg descriptor-reg) *
   %compare-and-swap-instance-ref)
 
-(define-fixnum-atomic-incf %instance-atomic-incf/fixnum instance
+(define-fixnum-atomic-incf %instance-atomic-fixnum-incf instance
   instance-slots-offset instance-pointer-lowtag
-  %instance-atomic-incf/fixnum)
-
-(define-vop (%atomic-incf-instance-fixnum)
-  (:translate %atomic-incf-instance-fixnum)
-  (:policy :fast-safe)
-  (:args (object :scs (descriptor-reg) :to :eval)
-         (index :scs (any-reg) :to :result)
-         (delta :scs (any-reg)))
-  (:arg-types * tagged-num tagged-num)
-  (:results (value :scs (any-reg) :target delta))
-  (:result-types tagged-num)
-  (:generator 5
-    (inst xadd (make-ea :qword :base object :index index
-                        :scale (ash 1 (- word-shift n-fixnum-tag-bits))
-                        :disp (- (* instance-slots-offset n-word-bytes))))))
+  %instance-atomic-fixnum-incf)
 
 ;;;; code object frobbing
 

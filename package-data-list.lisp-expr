@@ -1340,7 +1340,7 @@ is a good idea, but see SB-SYS re. blurring of boundaries."
                "%FIND-POSITION-IF-NOT-VECTOR-MACRO"
                "%HYPOT"
                #+(or x86 x86-64 ppc)
-               "%INSTANCE-ATOMIC-INCF/FIXNUM"
+               "%INSTANCE-ATOMIC-FIXNUM-INCF"
                "%LDB" "%LOG" "%LOGB" "%LOG10"
                "%LAST0"
                "%LAST1"

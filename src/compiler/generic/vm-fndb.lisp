@@ -170,7 +170,7 @@
 (defknown %array-atomic-word-incf (t index sb!vm:word) sb!vm:word
   (always-translatable))
 #!+(or x86 x86-64)
-(defknown %instance-atomic-incf/fixnum (instance index fixnum) fixnum
+(defknown %instance-atomic-fixnum-incf (instance index fixnum) fixnum
     (always-translatable))
 
 ;;; These two are mostly used for bit-bashing operations.
