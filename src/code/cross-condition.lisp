@@ -31,6 +31,9 @@
 (define-condition reference-condition ()
   ((references :initarg :references :reader reference-condition-references)))
 
+(define-condition local-argument-mismatch (reference-condition simple-warning)
+  ())
+
 ;;; KLUDGE: yet another OAOOM.
 ;;;
 ;;; FIXME: This is clearly one OAOOM KLUDGE too many in a row. When tempted
