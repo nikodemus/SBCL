@@ -422,60 +422,64 @@ any non-negative real number."
     ;; Process command line options.
     (loop while options do
          (/show0 "at head of LOOP WHILE OPTIONS DO in TOPLEVEL-INIT")
-         (let ((option (first options)))
-           (flet ((pop-option ()
-                    (if options
-                        (pop options)
-                        (startup-error
-                         "unexpected end of command line options"))))
-             (cond ((string= option "--script")
-                    (pop-option)
+         (let* ((option (first options))
+                (p (position #\= option))
+                (option-name (subseq option 0 p))
+                (option-value (when p (subseq option (1+ p)))))
+           (labels ((pop-option (&optional default)
+                      (if options
+                          (pop options)
+                          (or default
+                              (startup-error
+                               "unexpected end of command line options"))))
+                    (option= (name &optional value default)
+                      (when (string= name option-name)
+                        (pop-option)
+                        (when (and value (not p))
+                          (setf option-value (pop-option default)))
+                        t)))
+             (cond ((option= "--script" t t)
                     (setf disable-debugger t
                           no-userinit t
                           no-sysinit t
-                          script (if options (pop-option) t))
+                          script option-value)
                     (return))
-                   ((string= option "--sysinit")
-                    (pop-option)
-                    (if sysinit
-                        (startup-error "multiple --sysinit options")
-                        (setf sysinit (pop-option))))
-                   ((string= option "--no-sysinit")
-                    (pop-option)
+                   ((option= "--end-toplevel-options")
+                    (return))
+                   ;;
+                   ;; Boolean flags
+                   ;;
+                   ((option= "--no-sysinit")
                     (setf no-sysinit t))
-                   ((string= option "--userinit")
-                    (pop-option)
-                    (if userinit
-                        (startup-error "multiple --userinit options")
-                        (setf userinit (pop-option))))
-                   ((string= option "--no-userinit")
-                    (pop-option)
+                   ((option= "--no-userinit")
                     (setf no-userinit t))
-                   ((string= option "--eval")
-                    (pop-option)
-                    (push (cons :eval (pop-option)) reversed-options))
-                   ((string= option "--load")
-                    (pop-option)
-                    (push (cons :load (pop-option)) reversed-options))
-                   ((string= option "--noprint")
-                    (pop-option)
+                   ((option= "--noprint")
                     (setf noprint t))
-                   ((string= option "--disable-debugger")
-                    (pop-option)
+                   ((option= "--disable-debugger")
                     (setf disable-debugger t))
-                   ((string= option "--quit")
-                    (pop-option)
+                   ((option= "--quit")
                     (setf finally-quit t))
-                   ((string= option "--non-interactive")
+                   ((option= "--non-interactive")
                     ;; This option is short for --quit and --disable-debugger,
                     ;; which are needed in combination for reliable non-
                     ;; interactive startup.
-                    (pop-option)
                     (setf finally-quit t)
                     (setf disable-debugger t))
-                   ((string= option "--end-toplevel-options")
-                    (pop-option)
-                    (return))
+                   ;;
+                   ;; Valued options
+                   ;;
+                   ((option= "--sysinit" t)
+                    (if sysinit
+                        (startup-error "multiple --sysinit options")
+                        (setf sysinit option-value)))
+                   ((option= "--userinit" t)
+                    (if userinit
+                        (startup-error "multiple --userinit options")
+                        (setf userinit option-value)))
+                   ((option= "--eval" t)
+                    (push (cons :eval option-value) reversed-options))
+                   ((option= "--load" t)
+                    (push (cons :load option-value) reversed-options))
                    (t
                     ;; Anything we don't recognize as a toplevel
                     ;; option must be the start of user-level
