@@ -166,8 +166,13 @@ copied_realpath(const char *pathname)
 /* miscellaneous chattiness */
 
 void
-print_help()
+print_help_and_exit()
 {
+    /* FIXME: we don't currently advertise --arg=value style arguments
+     * too loudly, because they have a huge potential to backfire with
+     * older SBCLs -- in all likelihood silently as they will simply
+     * be taken as toplevel options...
+     */
     puts(
 "Usage: sbcl [runtime-options] [toplevel-options] [user-options]\n\
 Common runtime options:\n\
@@ -197,13 +202,15 @@ appear before user options.\n\
 \n\
 For more information please refer to the SBCL User Manual, which\n\
 should be installed along with SBCL, and is also available from the\n\
-website <http://www.sbcl.org/>.\n");
+website <http://www.sbcl.org/>.");
+    exit(0);
 }
 
 void
-print_version()
+print_version_and_exit()
 {
     printf("SBCL %s\n", SBCL_VERSION_STRING);
+    exit(0);
 }
 
 void
@@ -294,47 +301,207 @@ search_for_executable(const char *argv0)
 }
 #endif /* LISP_FEATURE_WIN32 */
 
-size_t
-parse_size_arg(char *arg, char *arg_name)
+/* Calling lose() for bad command-line arguments isn't really that
+ * useful. This would be a nice place to spit out eg. the documentation
+ * pertaining to the problematic argument.
+ */
+void
+arg_error(char *name, char *fmt, ...)
 {
-  char *tail, *power_name;
-  size_t power, res;
+    va_list ap;
+    fprintf(stderr, "SBCL (pid %d): invalid %s option: ", getpid(), name);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "\n");
+    fflush(stderr);
+    exit(1);
+}
 
-  res = strtoul(arg, &tail, 0);
+void missing_arg_value(char *name)
+{
+    arg_error(name, "no value provided.", name);
+}
 
-  if (arg == tail) {
-    lose("%s argument is not a number: %s", arg_name, arg);
-  } else if (tail[0]) {
-    int i, size;
-    power_name = copied_string(tail);
-    size = strlen(power_name);
-    for (i=0; i<size; i++)
-      power_name[i] = toupper(power_name[i]);
-  } else {
-    power = 20;
-    power_name = NULL;
-  }
-  if (power_name) {
-    if ((0==strcmp("KB", power_name)) ||
-        (0==strcmp("KIB", power_name))) {
-      power = 10;
-    } else if ((0==strcmp("MB", power_name)) ||
-               (0==strcmp("MIB", power_name))) {
-      power = 20;
-    } else if ((0==strcmp("GB", power_name)) ||
-               (0==strcmp("GIB", power_name))) {
-      power = 30;
-    } else {
-      lose("%s argument has an unknown suffix: %s", arg_name, tail);
+boolean
+string_equals(char *s1, char *s2)
+{
+    return 0 == strcmp(s1, s2);
+}
+
+boolean
+string_equals_upto(char *s1, char *s2, size_t n)
+{
+    return 0 == strncmp(s1, s2, n);
+}
+
+char *
+string_upcase(char *s)
+{
+    int i, size = strlen(s);
+    s = copied_string(s);
+    for (i=0; i < size; i++)
+        s[i] = toupper(s[i]);
+    return s;
+}
+
+boolean
+arg_equals(char *name, char *arg)
+{
+    size_t namelen = strlen(name);
+    size_t arglen = strlen(arg);
+    if (string_equals_upto(name, arg, namelen) &&
+        ((arglen == namelen) ||
+         ((arglen > namelen) &&
+          (arg[namelen] == '='))))
+        return 1;
+    else
+        return 0;
+}
+
+struct arg_parser {
+    char **argv;
+    int argi;
+    int argc;
+};
+
+boolean
+consume_arg(char *name, char *arg, struct arg_parser *state)
+{
+    if (string_equals(arg, name)) {
+        state->argi++;
+        return 1;
+    } else
+        return 0;
+}
+
+char *
+consume_arg_and_value(char *name, char *arg, struct arg_parser *state)
+{
+    /* If we have a valued argument, it can be either
+     *   --arg value
+     * or
+     *   --arg=value
+     */
+    size_t namelen, arglen;
+
+    if (string_equals(name, arg)) {
+        /* --arg value */
+        size_t i = state->argi + 1;
+        if (i >= state->argc)
+            missing_arg_value(name);
+        state->argi = i + 1;
+        return state->argv[i];
     }
-    free(power_name);
-  }
-  if ((res <= 0) ||
-      (res >= (SIZE_MAX >> power))) {
-    lose("%s argument is out of range: %s", arg_name, arg);
-  }
-  res <<= power;
-  return res;
+
+    namelen = strlen(name);
+    arglen = strlen(arg);
+
+    if (string_equals_upto(name, arg, namelen) &&
+        (arglen > namelen) &&
+        (arg[namelen] == '=')) {
+        /* --arg=value. */
+        size_t i = namelen + 1;
+        if (i > arglen)
+            missing_arg_value(name);
+        state->argi++;
+        return arg + i;
+    }
+
+    return NULL;
+}
+
+boolean
+parse_hook_arg(char* name, char *arg, void (*hook)(),
+               struct arg_parser *state)
+{
+    if (consume_arg(name, arg, state)) {
+        hook();
+        return 1;
+    }
+    return 0;
+}
+
+boolean
+parse_bool_arg(char *name, char *arg, int *value, int yes,
+               struct arg_parser *state)
+{
+    if (consume_arg(name, arg, state)) {
+        *value = yes;
+        return 1;
+    }
+    return 0;
+}
+
+boolean
+parse_string_arg(char *name, char *arg, char **value,
+                 struct arg_parser *state)
+{
+    char *argval = consume_arg_and_value(name, arg, state);
+    if (argval) {
+        if (*value)
+            arg_error(name, "specified multiple times");
+        *value = copied_string(argval);
+        return 1;
+    }
+    return 0;
+}
+
+boolean
+parse_size_arg(char *name, char *arg, size_t *value, size_t max,
+               struct arg_parser *state)
+{
+    char *argval = consume_arg_and_value(name, arg, state);
+    if (argval) {
+        char *tail, *power_name = NULL;
+        size_t power, res;
+
+        res = strtoul(argval, &tail, 0);
+
+        if (argval == tail) {
+            arg_error(name, "argument is not a number: %s", name, argval);
+        } else if (tail[0]) {
+            power_name = string_upcase(tail);
+        } else {
+            power = 20;
+            power_name = NULL;
+        }
+        if (power_name) {
+            if ((string_equals("KB", power_name)) ||
+                (string_equals("KIB", power_name))) {
+                power = 10;
+            } else if ((string_equals("MB", power_name)) ||
+                       (string_equals("MIB", power_name))) {
+                power = 20;
+            } else if ((string_equals("GB", power_name)) ||
+                       (string_equals("GIB", power_name))) {
+                power = 30;
+            } else {
+                arg_error(name, "argument has unknown suffix '%s': %s", tail, argval);
+            }
+        }
+        if ((res <= 0) || (res >= (SIZE_MAX >> power))) {
+            arg_error(name, "argument is out of range: %s", argval);
+        }
+        res <<= power;
+
+        if (max && (res > max)) {
+            if (power_name)
+                arg_error(name, "argument %s (%lu bytes) is too large, max %lu%s (%lu bytes)",
+                          argval, res,
+                          max >> power,
+                          max);
+            else
+                arg_error(name, "argument %s (bytes) is too large, max %lu (bytes)",
+                          argval, max);
+        }
+        if (power_name)
+            free(power_name);
+
+        *value = res;
+        return 1;
+    }
+    return 0;
 }
 
 char **posix_argv;
@@ -413,13 +580,13 @@ main(int argc, char *argv[], char *envp[])
         thread_control_stack_size = runtime_options->thread_control_stack_size;
         sbcl_argv = argv;
     } else {
-        int argi = 1;
+        struct arg_parser state = { argv, 1, argc };
 
         runtime_options = successful_malloc(sizeof(struct runtime_options));
 
-        while (argi < argc) {
-            char *arg = argv[argi];
-            if (0 == strcmp(arg, "--script")) {
+        while (state.argi < argc) {
+            char *arg = argv[state.argi];
+            if (string_equals(arg, "--script")) {
                 /* This is both a runtime and a toplevel option. As a
                  * runtime option, it is equivalent to --noinform.
                  * This exits, and does not increment argi, so that
@@ -429,111 +596,77 @@ main(int argc, char *argv[], char *envp[])
                 disable_lossage_handler_p = 1;
                 lose_on_corruption_p = 1;
                 break;
-            } else if (0 == strcmp(arg, "--noinform")) {
-                noinform = 1;
-                ++argi;
-            } else if (0 == strcmp(arg, "--core")) {
-                if (core) {
-                    lose("more than one core file specified\n");
-                } else {
-                    ++argi;
-                    if (argi >= argc) {
-                        lose("missing filename for --core argument\n");
-                    }
-                    core = copied_string(argv[argi]);
-                    ++argi;
-                }
-            } else if (0 == strcmp(arg, "--help")) {
-                /* I think this is the (or a) usual convention: upon
-                 * seeing "--help" we immediately print our help
-                 * string and exit, ignoring everything else. */
-                print_help();
-                exit(0);
-            } else if (0 == strcmp(arg, "--version")) {
-                /* As in "--help" case, I think this is expected. */
-                print_version();
-                exit(0);
-            } else if (0 == strcmp(arg, "--dynamic-space-size")) {
-                ++argi;
-                if (argi >= argc)
-                    lose("missing argument for --dynamic-space-size");
-                  dynamic_space_size = parse_size_arg(argv[argi++], "--dynamic-space-size");
-#               ifdef MAX_DYNAMIC_SPACE_END
-                if (!((DYNAMIC_SPACE_START <
-                       DYNAMIC_SPACE_START+dynamic_space_size) &&
-                      (DYNAMIC_SPACE_START+dynamic_space_size <=
-                       MAX_DYNAMIC_SPACE_END)))
-                  lose("--dynamic-space-size argument %s is too large, max %lu",
-                       argv[argi-1], MAX_DYNAMIC_SPACE_END-DYNAMIC_SPACE_START);
-#               endif
-            } else if (0 == strcmp(arg, "--control-stack-size")) {
-                ++argi;
-                if (argi >= argc)
-                    lose("missing argument for --control-stack-size");
-                errno = 0;
-                thread_control_stack_size = parse_size_arg(argv[argi++], "--control-stack-size");
-            } else if (0 == strcmp(arg, "--debug-environment")) {
-                int n = 0;
-                printf("; Commandline arguments:\n");
-                while (n < argc) {
-                    printf(";  %2d: \"%s\"\n", n, argv[n]);
-                    ++n;
-                }
-                n = 0;
-                printf(";\n; Environment:\n");
-                while (ENVIRON[n]) {
-                    printf(";  %2d: \"%s\"\n", n, ENVIRON[n]);
-                    ++n;
-                }
-                ++argi;
-            } else if (0 == strcmp(arg, "--disable-ldb")) {
-                disable_lossage_handler_p = 1;
-                ++argi;
-            } else if (0 == strcmp(arg, "--lose-on-corruption")) {
-                lose_on_corruption_p = 1;
-                ++argi;
-            } else if (0 == strcmp(arg, "--end-runtime-options")) {
-                end_runtime_options = 1;
-                ++argi;
-                break;
-            } else if (0 == strcmp(arg, "--merge-core-pages")) {
-                ++argi;
-                merge_core_pages = 1;
-            } else if (0 == strcmp(arg, "--no-merge-core-pages")) {
-                ++argi;
-                merge_core_pages = 0;
-            } else if (0 == strcmp(arg, "--default-merge-core-pages")) {
-                ++argi;
-                merge_core_pages = -1;
-            } else {
-                /* This option was unrecognized as a runtime option,
-                 * so it must be a toplevel option or a user option,
-                 * so we must be past the end of the runtime option
-                 * section. */
-                break;
             }
+            if (parse_bool_arg("--end-runtime-options", arg, &end_runtime_options, 1,
+                               &state) ||
+                (!(parse_hook_arg("--help", arg, print_help_and_exit,
+                                  &state) ||
+                   parse_hook_arg("--version", arg, print_version_and_exit,
+                                  &state) ||
+                   parse_bool_arg("--noinform", arg, &noinform, 1,
+                                  &state) ||
+                   parse_bool_arg("--disable-ldb", arg, &disable_lossage_handler_p, 1,
+                                  &state) ||
+                   parse_bool_arg("--lose-on-corruption", arg, &lose_on_corruption_p, 1,
+                                  &state) ||
+                   parse_bool_arg("--merge-core-pages", arg, &merge_core_pages, 1,
+                                  &state) ||
+                   parse_bool_arg("--no-merge-core-pages", arg, &merge_core_pages, 0,
+                                  &state) ||
+                   parse_bool_arg("--default-merge-core-pages", arg, &merge_core_pages, -1,
+                                  &state) ||
+#             ifdef MAX_DYNAMIC_SPACE_END
+                   parse_size_arg("--dynamic-space-size", arg, &dynamic_space_size,
+                                  MAX_DYNAMIC_SPACE_END-DYNAMIC_SPACE_START,
+                                  &state) ||
+#             else
+                   parse_size_arg("--dynamic-space-size", arg, &dynamic_space_size,
+                                  0,
+                                  &state) ||
+#             endif
+                   parse_size_arg("--control-stack-size", arg, &thread_control_stack_size,
+                                  0,
+                                  &state) ||
+                   parse_string_arg("--core", arg, &core,
+                                    &state))))
+                /* Either --end-runtime-options, or unrecognized as a
+                 * runtime option, so it must be a toplevel option or
+                 * a user option, so we must be past the end of the
+                 * runtime option section. */
+                break;
         }
+
         /* This is where we strip out those options that we handle. We
          * also take this opportunity to make sure that we don't find
-         * an out-of-place "--end-runtime-options" option. */
+         * an certain easy-to-misplace-and-probably-meant-for-us
+         * commandline arguments.
+         */
         {
-            char *argi0 = argv[argi];
+            char *argi0 = argv[state.argi];
             int argj = 1;
             /* (argc - argi) for the arguments, one for the binary,
                and one for the terminating NULL. */
-            sbcl_argv = successful_malloc((2 + argc - argi) * sizeof(char *));
+            sbcl_argv = successful_malloc((2 + argc - state.argi) * sizeof(char *));
             sbcl_argv[0] = argv[0];
-            while (argi < argc) {
-                char *arg = argv[argi++];
+            while (state.argi < argc) {
+                char *arg = argv[state.argi++];
                 /* If we encounter --end-runtime-options for the first
                  * time after the point where we had to give up on
                  * runtime options, then the point where we had to
                  * give up on runtime options must've been a user
                  * error. */
                 if (!end_runtime_options &&
-                    0 == strcmp(arg, "--end-runtime-options")) {
-                    lose("bad runtime option \"%s\"\n", argi0);
-                }
+                    string_equals(arg, "--end-runtime-options"))
+                    arg_error("runtime", "%s unknown but appears before --end-runtime-options",
+                              argi0);
+                /* These are annoyingly easy to misplace when editing eg. a script,
+                 * so make some noise.
+                 */
+                if (arg_equals("--dynamic-space-size", arg) ||
+                    arg_equals("--control-stack-size", arg) ||
+                    arg_equals("--core", arg))
+                    fprintf(stderr, "WARNING: "
+                            "possibly misplaced SBCL option ignored by the runtime: %s\n", arg);
                 sbcl_argv[argj++] = arg;
             }
             sbcl_argv[argj] = 0;
