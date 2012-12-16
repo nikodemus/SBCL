@@ -163,6 +163,44 @@ copied_realpath(const char *pathname)
 }
 #endif /* LISP_FEATURE_WIN32 */
 
+/* We want to defer any non-fatal notices till os_init is done,
+ * since it may elect to re-execute SBCL.
+ *
+ * Hence this.
+ */
+struct deferred_output {
+    FILE *stream;
+    char *string;
+    struct deferred_output *next;
+};
+struct deferred_output *to_print_after_os_init = NULL;
+
+void
+after_os_init_fprintf(FILE *stream, char *fmt, ...)
+{
+    va_list ap;
+    struct deferred_output *out = successful_malloc(sizeof(struct deferred_output));
+    out->stream = stream;
+    out->next = to_print_after_os_init;
+
+    va_start(ap, fmt);
+    vasprintf(&(out->string), fmt, ap);
+    va_end(ap);
+
+    to_print_after_os_init = out;
+}
+
+void
+print_after_os_init()
+{
+    while (to_print_after_os_init) {
+        struct deferred_output *out = to_print_after_os_init;
+        fprintf(out->stream, out->string);
+        to_print_after_os_init = out->next;
+        free(out);
+    }
+}
+
 /* miscellaneous chattiness */
 
 void
@@ -665,8 +703,9 @@ main(int argc, char *argv[], char *envp[])
                 if (arg_equals("--dynamic-space-size", arg) ||
                     arg_equals("--control-stack-size", arg) ||
                     arg_equals("--core", arg))
-                    fprintf(stderr, "WARNING: "
-                            "possibly misplaced SBCL option ignored by the runtime: %s\n", arg);
+                    after_os_init_fprintf
+                        (stderr, "WARNING: "
+                         "possibly misplaced SBCL option ignored by the runtime: %s\n", arg);
                 sbcl_argv[argj++] = arg;
             }
             sbcl_argv[argj] = 0;
@@ -689,6 +728,7 @@ main(int argc, char *argv[], char *envp[])
      * systems (e.g. Alpha) arch_init() needs need os_vm_page_size, so
      * it must follow os_init(). -- WHN 2000-01-26 */
     os_init(argv, envp);
+    print_after_os_init();
     dyndebug_init(); /* after os_init: do not print output before execve */
     arch_init();
     gc_init();
