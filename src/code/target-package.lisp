@@ -342,6 +342,84 @@ error if any of PACKAGES is not a valid package designator."
   (def package-used-by-list package-%used-by-list)
   (def package-shadowing-symbols package-%shadowing-symbols))
 
+(defun package-local-nicknames (package-designator)
+  "Returns an fresh alist of \(local-nickname . global-name) describing the
+nicknames local to the designated package.
+
+When in the designated package, calls to FIND-PACKAGE with the any of the
+local-nicknames will return the package with the corresponding global-name
+instead. This also affects all implied calls to FIND-PACKAGE, including those
+performed by the reader.
+
+When printing a package prefix for a symbol while in the designated package,
+the local nickname (if any) is used instead of the global name in order
+to preserve read/print consistency.
+
+See also: ADD-PACKAGE-LOCAL-NICKNAME, REMOVE-PACKAGE-LOCAL-NICKNAME,
+and the DEFPACKAGE option :LOCAL-NICKNAMES."
+  (copy-tree
+   (package-%local-nicknames
+    (find-undeleted-package-or-lose package-designator))))
+
+(defun add-package-local-nickname (local-nickname global-name
+                                   &optional (package-designator (sane-package)))
+  "Adds LOCAL-NICKNAME for GLOBAL-NAME in the designated package, defaulting
+to current package. LOCAL-NICKNAME and GLOBAL-NAME must both be string
+designators.
+
+Returns the designated package.
+
+Signals an error if LOCAL-NICKNAME is already a package local nickname for a
+different global name in the designated package, or if LOCAL-NICKNAME is one of
+\"CL\", \"COMMON-LISP\", \"KEYWORD\", or \"\".
+
+When in the designated package, calls to FIND-PACKAGE with the LOCAL-NICKNAME
+will return the package with the specified GLOBAL-NAME instead. This also
+affects all implied calls to FIND-PACKAGE, including those performed by the
+reader.
+
+When printing a package prefix for a symbol while in the designated package,
+the local nickname (if any) is used instead of the global name in order to
+preserve read/print consistency.
+
+See also: PACKAGE-LOCAL-NICKNAMES, REMOVE-PACKAGE-LOCAL-NICKNAME, and the
+DEFPACKAGE option :LOCAL-NICKNAMES."
+  (let* ((nick (string local-nickname))
+         (name (string global-name))
+         (package (find-undeleted-package-or-lose package-designator))
+         (existing (package-%local-nicknames package))
+         (cell (assoc nick existing :test #'string=)))
+    (when (and cell (string/= name (cdr cell)))
+      (error "~@<Cannot add ~A as local nickname for ~A in ~S: already nickname for ~A.~:@>"
+             nick name package (cdr cell)))
+    (when (member nick '("CL" "COMMON-LISP" "KEYWORD" "") :test #'string=)
+      (error "Cannot use ~A as a package local nickname." nick))
+    (unless cell
+      (with-single-package-locked-error
+          (:package package "adding ~A as a local nickname for ~A"
+                    nick name))
+      (push (cons nick name) (package-%local-nicknames package)))
+    package))
+
+(defun remove-package-local-nickname (old-nickname
+                                      &optional (package-designator (sane-package)))
+  "If the designated package had OLD-NICKNAME as a local nickname for
+another package, it is removed. Returns true if the nickname existed and was
+removed, and NIL otherwise.
+
+See also: ADD-PACKAGE-LOCAL-NICKNAME, PACKAGE-LOCAL-NICKNAMES,
+and the DEFPACKAGE option :LOCAL-NICKNAMES."
+  (let* ((nick (string old-nickname))
+         (package (find-undeleted-package-or-lose package-designator))
+         (existing (package-%local-nicknames package))
+         (cell (assoc nick existing :test #'string=)))
+    (when cell
+      (with-single-package-locked-error
+          (:package package "removing local nickname ~A for ~A"
+                    nick (cdr cell)))
+      (setf (package-%local-nicknames package) (remove cell existing))
+      t)))
+
 (defun %package-hashtable-symbol-count (table)
   (let ((size (the fixnum
                 (- (package-hashtable-size table)
@@ -385,7 +463,10 @@ error if any of PACKAGES is not a valid package designator."
 (defun find-package (package-designator)
   (flet ((find-package-from-string (string)
            (declare (type string string))
-           (let ((packageoid (gethash string *package-names*)))
+           (let* ((nicknamed (when (boundp '*package*)
+                               (cdr (assoc string (package-%local-nicknames (sane-package))
+                                           :test #'string=))))
+                  (packageoid (gethash (or nicknamed string) *package-names*)))
              (when (and (null packageoid)
                         (not *in-package-init*) ; KLUDGE
                         (let ((mismatch (mismatch "SB!" string)))
