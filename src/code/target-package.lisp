@@ -369,9 +369,9 @@ designators.
 
 Returns the designated package.
 
-Signals an error if LOCAL-NICKNAME is already a package local nickname for a
-different global name in the designated package, or if LOCAL-NICKNAME is one of
-\"CL\", \"COMMON-LISP\", \"KEYWORD\", or \"\".
+Signals a continuable error if LOCAL-NICKNAME is already a package local
+nickname for a different global name in the designated package, or if
+LOCAL-NICKNAME is one of \"CL\", \"COMMON-LISP\", \"KEYWORD\", or \"\".
 
 When in the designated package, calls to FIND-PACKAGE with the LOCAL-NICKNAME
 will return the package with the specified GLOBAL-NAME instead. This also
@@ -389,15 +389,27 @@ DEFPACKAGE option :LOCAL-NICKNAMES."
          (package (find-undeleted-package-or-lose package-designator))
          (existing (package-%local-nicknames package))
          (cell (assoc nick existing :test #'string=)))
-    (when (and cell (string/= name (cdr cell)))
-      (error "~@<Cannot add ~A as local nickname for ~A in ~S: already nickname for ~A.~:@>"
-             nick name package (cdr cell)))
+    (with-single-package-locked-error
+        (:package package "adding ~A as a local nickname for ~A"
+                  nick name))
     (when (member nick '("CL" "COMMON-LISP" "KEYWORD" "") :test #'string=)
-      (error "Cannot use ~A as a package local nickname." nick))
+      (cerror "Continue, use it as local nickname anyways."
+              "Attempt to use ~A as a package local nickname." nick))
+    (when (and cell (string/= name (cdr cell)))
+      (restart-case
+          (error "~@<Cannot add ~A as local nickname for ~A in ~S: already nickname for ~A.~:@>"
+                 nick name package (cdr cell))
+        (keep-old ()
+          :report (lambda (s)
+                    (format s "Keep ~A as local nicname for ~A."
+                            nick (cdr cell))))
+        (change-nick ()
+          :report (lambda (s)
+                    (format s "Use ~A as local nickname for ~A instead."
+                            nick name))
+          (setf (cdr cell) name)))
+      (return-from add-package-local-nickname package))
     (unless cell
-      (with-single-package-locked-error
-          (:package package "adding ~A as a local nickname for ~A"
-                    nick name))
       (push (cons nick name) (package-%local-nicknames package)))
     package))
 
