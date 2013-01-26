@@ -473,11 +473,37 @@ and the DEFPACKAGE option :LOCAL-NICKNAMES."
    (find-restart-or-control-error 'debootstrap-package condition)))
 
 (defun find-package (package-designator)
+  "If PACKAGE-DESIGNATOR is a package, it is returned. Otherwise PACKAGE-DESIGNATOR
+must be a string designator, in which case the package it names is located and returned.
+
+As an SBCL extension, the current package may effect the way a package name is
+resolved: if the current package has local nicknames specified, package names
+matching those are resolved by finding the package with the global name
+associated with the local nickname.
+
+Example:
+
+  (defpackage :a)
+  (defpackage :example (:use :cl) (:local-nicknames (:x :a)))
+  (let ((*package* (find-package :example)))
+    (find-package :x)) => #<PACKAGE A>
+
+See also: ADD-PACKAGE-LOCAL-NICKNAME, PACKAGE-LOCAL-NICKNAMES,
+REMOVE-PACKAGE-LOCAL-NICKNAME, and the DEFPACKAGE option :LOCAL-NICKNAMES."
+  (find-package-using-package package-designator
+                              (when (boundp '*package*)
+                                *package*)))
+
+;;; This is undocumented and unexported for now, but the idea is that by
+;;; making this a generic function then packages with custom package classes
+;;; could hook into this to provide their own resolution.
+(defun find-package-using-package (package-designator base)
   (flet ((find-package-from-string (string)
            (declare (type string string))
-           (let* ((nicknamed (when (boundp '*package*)
-                               (cdr (assoc string (package-%local-nicknames (sane-package))
-                                           :test #'string=))))
+           (let* ((nicknames (when base
+                               (package-%local-nicknames base)))
+                  (nicknamed (when nicknames
+                               (cdr (assoc string nicknames :test #'string=))))
                   (packageoid (gethash (or nicknamed string) *package-names*)))
              (when (and (null packageoid)
                         (not *in-package-init*) ; KLUDGE
@@ -486,7 +512,7 @@ and the DEFPACKAGE option :LOCAL-NICKNAMES."
                (restart-case
                    (signal 'bootstrap-package-not-found :name string)
                  (debootstrap-package ()
-                   (return-from find-package
+                   (return-from find-package-using-package
                      (if (string= string "SB!XC")
                          (find-package "COMMON-LISP")
                          (find-package
