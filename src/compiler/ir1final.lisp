@@ -27,7 +27,7 @@
               (note (transform-note (car failure))))
           (cond
            ((consp what)
-            (compiler-notify "~@<unable to ~2I~_~A ~I~_because: ~2I~_~?~:>"
+            (compiler-notify "~@<~2Iunable to ~A because:~_~?~:>"
                              note (first what) (rest what)))
            ((valid-fun-use node what
                            :argument-test #'types-equal-or-intersect
@@ -39,10 +39,8 @@
                 (valid-fun-use node what
                                :unwinnage-fun #'give-grief
                                :lossage-fun #'give-grief))
-              (compiler-notify "~@<unable to ~
-                                ~2I~_~A ~
-                                ~I~_due to type uncertainty: ~
-                                ~2I~_~{~?~^~@:_~}~:>"
+              (compiler-notify "~@<unable to ~A due to~_type uncertainty: ~2I~_~
+                                ~{~?~^~@:_~}~:>"
                              note (messages))))
            ;; As best I can guess, it's OK to fall off the end here
            ;; because if it's not a VALID-FUNCTION-USE, the user
@@ -82,7 +80,7 @@
                (unless (defined-ftype-matches-declared-ftype-p
                          defined-ftype declared-ftype)
                  (compiler-style-warn
-                  "~@<The previously declared FTYPE~2I ~_~S~I ~_~
+                  "~@<The previously declared FTYPE~2I ~_~S~I~_~
                    conflicts with the definition type ~2I~_~S~:>"
                   (type-specifier declared-ftype)
                   (type-specifier defined-ftype)))))

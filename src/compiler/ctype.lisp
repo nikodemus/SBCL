@@ -168,7 +168,7 @@
                        (note-unwinnage "can't tell whether the result is a ~S"
                                        (type-specifier return-type)))
                       ((not int)
-                       (note-lossage "The result is a ~S, not a ~S."
+                       (note-lossage "The result is a~:@_ ~S, not a~:@_ ~S."
                                      (type-specifier out-type)
                                      (type-specifier return-type))))))))
         (loop for arg in args
@@ -196,7 +196,7 @@
                                n (type-specifier type))
                nil)
               ((not int)
-               (note-lossage "The ~:R argument is a ~S, not a ~S."
+               (note-lossage "~:R argument is a ~S, not a ~S."
                              n (type-specifier ctype) (type-specifier type))
                nil)
               ((eq ctype *empty-type*)
@@ -761,8 +761,8 @@
           ((and dtype (not (values-types-equal-or-intersect dtype
                                                             type-returns)))
            (note-lossage
-            "The result type from ~A:~%  ~S~@
-             conflicts with the definition's result type:~%  ~S"
+            "~@<The result type from ~A:~2I ~_~S~I~_~
+             conflicts with the definition's result type:~2I~_~S~:>"
             where (type-specifier type-returns) (type-specifier dtype))
            nil)
           (*lossage-detected* nil)

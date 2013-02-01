@@ -1599,4 +1599,5 @@ line break."
         (copy-pprint-dispatch *initial-pprint-dispatch-table*))
   (setf *print-pprint-dispatch*
         (copy-pprint-dispatch *initial-pprint-dispatch-table*))
+  (sb!c::init-compiler-pprint-dispatch)
   (setf *print-pretty* t))

@@ -706,20 +706,21 @@
     (when (losers)
       (collect ((messages)
                 (notes 0 +))
-        (flet ((lose1 (string &rest stuff)
-                 (messages string)
-                 (messages stuff)))
-          (dolist (loser (losers))
-            (when (and *efficiency-note-limit*
-                       (>= (notes) *efficiency-note-limit*))
-              (lose1 "etc.")
-              (return))
+        (dolist (loser (losers))
+          #+nil
+          (when (and *efficiency-note-limit*
+                     (>= (notes) *efficiency-note-limit*))
+            (lose1 "etc.")
+            (return))
+          (flet ((lose1 (string &rest stuff)
+                   (messages "~@<~2Iunable to do ~A (cost ~W):~_~4I~@?~:>")
+                   (messages (list* (or (template-note loser) (template-name loser))
+                                    (template-cost loser)
+                                    string
+                                    stuff))))
             (let* ((type (template-type loser))
                    (valid (valid-fun-use call type))
                    (strict-valid (valid-fun-use call type)))
-              (lose1 "unable to do ~A (cost ~W) because:"
-                     (or (template-note loser) (template-name loser))
-                     (template-cost loser))
               (cond
                ((and valid strict-valid)
                 (strange-template-failure loser call ltn-policy #'lose1))
@@ -733,16 +734,15 @@
               (notes 1))))
 
         (let ((*compiler-error-context* call))
-          (compiler-notify "~{~?~^~&~6T~}"
-                           (if template
-                               `("forced to do ~A (cost ~W)"
-                                 (,(or (template-note template)
-                                       (template-name template))
-                                  ,(template-cost template))
-                                 . ,(messages))
-                               `("forced to do full call"
-                                 nil
-                                 . ,(messages))))))))
+          (if template
+              (compiler-notify
+               "~@<forced to do ~A (cost ~W):~{~_ - ~?~}~:>"
+               (or (template-note template) (template-name template))
+               (template-cost template)
+               (messages))
+              (compiler-notify
+               "~@<forced to do full call:~{~_ - ~?~}~:>"
+               (messages)))))))
   (values))
 
 ;;; If a function has a special-case annotation method use that,

@@ -19,9 +19,11 @@
 (defvar *enclosing-source-cutoff* 1
   #!+sb-doc
   "The maximum number of enclosing non-original source forms (i.e. from
-  macroexpansion) that we print in full. For additional enclosing forms, we
-  print only the CAR.")
+macroexpansion and compiler transformations) that we print in full. For
+additional enclosing forms, we print only the CAR.")
 (declaim (type unsigned-byte *enclosing-source-cutoff*))
+
+(defvar *show-processing-path* nil)
 
 ;;; We separate the determination of compiler error contexts from the
 ;;; actual signalling of those errors by objectifying the error
@@ -172,15 +174,56 @@
                (values '(unable to locate source)
                        '((some strange place)))))))))
 
+;;; A special pretty printer dispatch table for printing forms from the compiler:
+;;;
+;;; * Because we normally print without *print-escape* to avoid printing
+;;;   everything with package prefixes (why, actually?) we special case
+;;;   strings characters and keywords, so (F #\F :F "F") doesn't print
+;;;   as (F F F F).
+;;;
+;;; * Because the compiler sometimes puts leafs directly into source forms,
+;;;   we print (%FUNCALL #<GLOBAL-VAR :%SOURCE-NAME FOO> ...) as (FOO ...)
+;;;   instead.
+;;;
+(defvar *compiler-pprint-dispatch* nil)
+
+(defun compiler-pprint-dispatch ()
+  (or *compiler-pprint-dispatch* *print-pprint-dispatch*))
+
+(defun init-compiler-pprint-dispatch ()
+  (setf *compiler-pprint-dispatch*
+        (let* ((dp (copy-pprint-dispatch nil)))
+          ;; So "F" #\F :F F are all distinct.
+          (set-pprint-dispatch `(or string character keyword)
+                               (lambda (stream thing)
+                                 (write thing :stream stream :pretty nil :escape t))
+                               0
+                               dp)
+          ;; So (%FUNCALL #<GLOBAL-VAR :%SOURCE-NAME FOO> ...) prints
+          ;; as (FOO ...).
+          (set-pprint-dispatch `(cons (eql %funcall) (cons global-var))
+                               (lambda (stream thing)
+                                 (write (cons (global-var-%source-name (second thing))
+                                              (cddr thing))
+                                        :stream stream))
+                               0
+                               dp)
+          dp)))
+
+;; On target this is done by !PPRINT-COLD-INIT.
+#+sb-xc-host
+(init-compiler-pprint-dispatch)
+
 ;;; Convert a source form to a string, suitably formatted for use in
 ;;; compiler warnings.
 (defun stringify-form (form &optional (pretty t))
   (with-standard-io-syntax
     (with-compiler-io-syntax
-        (let ((*print-pretty* pretty))
-          (if pretty
-              (format nil "~<~@;  ~S~:>" (list form))
-              (prin1-to-string form))))))
+      (let ((*print-pretty* pretty))
+        (if pretty
+            (let ((*print-pprint-dispatch* (compiler-pprint-dispatch)))
+              (format nil "~<~A~:>" (list form)))
+            (prin1-to-string form))))))
 
 ;;; Return a COMPILER-ERROR-CONTEXT structure describing the current
 ;;; error context, or NIL if we can't figure anything out. ARGS is a
@@ -214,10 +257,13 @@
                                        (rest forms)
                                        forms))
                         (if (>= n *enclosing-source-cutoff*)
-                            (short (stringify-form (if (consp src)
-                                                       (car src)
-                                                       src)
-                                                   nil))
+                            (short (stringify-form
+                                    (labels ((rec (src)
+                                               (if (consp src)
+                                                   (rec (car src))
+                                                   src)))
+                                      (rec src))
+                                    nil))
                             (full (stringify-form src)))
                         (incf n)))
 
@@ -246,16 +292,6 @@
 ;;; We save the context information that we printed out most recently
 ;;; so that we don't print it out redundantly.
 
-;;; The last COMPILER-ERROR-CONTEXT that we printed.
-(defvar *last-error-context* nil)
-(declaim (type (or compiler-error-context null) *last-error-context*))
-
-;;; The format string and args for the last error we printed.
-(defvar *last-format-string* nil)
-(defvar *last-format-args* nil)
-(declaim (type (or string null) *last-format-string*))
-(declaim (type list *last-format-args*))
-
 ;;; The number of times that the last error message has been emitted,
 ;;; so that we can compress duplicate error messages.
 (defvar *last-message-count* 0)
@@ -272,110 +308,6 @@
          (format stream "~&; [Last message occurs ~W times.]~2%"
                  *last-message-count*)))
   (setq *last-message-count* 0))
-
-;;; Print out the message, with appropriate context if we can find it.
-;;; If the context is different from the context of the last message
-;;; we printed, then we print the context. If the original source is
-;;; different from the source we are working on, then we print the
-;;; current source in addition to the original source.
-;;;
-;;; We suppress printing of messages identical to the previous, but
-;;; record the number of times that the message is repeated.
-(defun print-compiler-message (stream format-string format-args)
-  (with-compiler-io-syntax
-    (%print-compiler-message stream format-string format-args)))
-
-(defun %print-compiler-message (stream format-string format-args)
-  (declare (type simple-string format-string))
-  (declare (type list format-args))
-  (let ((context (find-error-context format-args)))
-    (cond (context
-           (let ((file (compiler-error-context-file-name context))
-                 (in (compiler-error-context-context context))
-                 (form (compiler-error-context-original-source context))
-                 (enclosing (compiler-error-context-enclosing-source context))
-                 (source (compiler-error-context-source context))
-                 (last *last-error-context*))
-
-             (unless  (and last
-                           (equal file (compiler-error-context-file-name last)))
-               (when (pathnamep file)
-                 (note-message-repeats stream)
-                 (setq last nil)
-                 (format stream "~2&; file: ~A~%" (namestring file))))
-
-             (unless (and last
-                          (equal in (compiler-error-context-context last)))
-               (note-message-repeats stream)
-               (setq last nil)
-               (pprint-logical-block (stream nil :per-line-prefix "; ")
-                 (format stream "in:~{~<~%    ~4:;~{ ~:S~}~>~^ =>~}" in))
-               (terpri stream))
-
-             (unless (and last
-                          (string= form
-                                   (compiler-error-context-original-source last)))
-               (note-message-repeats stream)
-               (setq last nil)
-               (pprint-logical-block (stream nil :per-line-prefix ";   ")
-                 (princ form stream))
-               (fresh-line stream))
-
-             (unless (and last
-                          (equal enclosing
-                                 (compiler-error-context-enclosing-source last)))
-               (when enclosing
-                 (note-message-repeats stream)
-                 (setq last nil)
-                 (format stream "~&; --> ~{~<~%; --> ~1:;~A~> ~}~%" enclosing)))
-
-             (unless (and last
-                          (equal source (compiler-error-context-source last)))
-               (setq *last-format-string* nil)
-               (when source
-                 (note-message-repeats stream)
-                 (dolist (src source)
-                   (fresh-line stream)
-                   (write-string "; ==>" stream)
-                   (terpri stream)
-                   (pprint-logical-block (stream nil :per-line-prefix "; ")
-                     (write-string src stream)))))))
-          (t
-           (fresh-line stream)
-           (note-message-repeats stream)
-           (setq *last-format-string* nil)))
-
-    (setq *last-error-context* context))
-
-  ;; FIXME: this testing for effective equality of compiler messages
-  ;; is ugly, and really ought to be done at a higher level.
-  (unless (and (equal format-string *last-format-string*)
-               (tree-equal format-args *last-format-args*))
-    (note-message-repeats stream nil)
-    (setq *last-format-string* format-string)
-    (setq *last-format-args* format-args)
-    (fresh-line stream)
-    (pprint-logical-block (stream nil :per-line-prefix "; ")
-      (format stream "~&~?" format-string format-args))
-    (fresh-line stream))
-
-  (incf *last-message-count*)
-  (values))
-
-(defun print-compiler-condition (condition)
-  (declare (type condition condition))
-  (let (;; These different classes of conditions have different
-        ;; effects on the return codes of COMPILE-FILE, so it's nice
-        ;; for users to be able to pick them out by lexical search
-        ;; through the output.
-        (what (etypecase condition
-                (style-warning 'style-warning)
-                (warning 'warning)
-                ((or error compiler-error) 'error))))
-    (print-compiler-message
-     *error-output*
-     (format nil "caught ~S:~%~~@<  ~~@;~~A~~:>" what)
-     (list (princ-to-string condition)))))
 
 ;;; The act of signalling one of these beasts must not cause WARNINGSP
 ;;; (or FAILUREP) to be set from COMPILE or COMPILE-FILE, so we can't
@@ -394,6 +326,98 @@ a STYLE-WARNING (or any more serious condition)."))
   (:documentation
    "A condition type signalled when the compiler deletes code that the user
 has written, having proved that it is unreachable."))
+
+(defun report-collected-compiler-notes (&optional (stream *error-output*))
+  (let (last form-table something)
+    (labels ((string-lines (string)
+               (if (find #\newline string)
+                   (with-input-from-string (s string)
+                     (loop for line = (read-line s nil)
+                           while line
+                           collect line))
+                   (list string)))
+             (report-them ()
+               (when last
+                 (unless something
+                   (terpri stream)
+                   (setf something t))
+                 (pprint-logical-block (stream nil :per-line-prefix "; ")
+                   (format stream "file: ~A~@:_~@:_" (car last))
+                   (format stream "  in: ~{~A~^ ~}~@:_" (cadr last))
+                   (dolist (source-table form-table)
+                     (destructuring-bind (form . note-tables) source-table
+                       (format stream "~@:_form: ~@<~I~{~A~@:_~}~:@>"
+                               (string-lines form))
+                       (dolist (note-table note-tables)
+                         (destructuring-bind (source enclosing
+                                              errors warnings style-warnings
+                                              compiler-notes deletion-notes)
+                             note-table
+                           (loop while source
+                                 do (format stream
+                                            "~@:_   ===> ~@<~I~{~A~^~@:_~}~:@>~@:_"
+                                            (string-lines (pop source))))
+                           (let ((n 0))
+                             (when errors
+                               (format stream "~@:_   caught ERROR~P:~@:_"
+                                       (length errors)))
+                             (dolist (note errors)
+                               (format stream "~@:_     ~2,' D: ~A~@:_" (incf n) note)))
+                           (let ((n 0))
+                             (when warnings
+                               (format stream "~@:_   caught WARNING~P:~@:_"
+                                       (length warnings)))
+                             (dolist (note warnings)
+                               (format stream "~@:_     ~2,' D: ~A~@:_" (incf n) note)))
+                           (let ((n 0))
+                             (when style-warnings
+                               (format stream "~@:_   caught STYLE-WARNING~P:~@:_"
+                                       (length style-warnings)))
+                             (dolist (note style-warnings)
+                               (format stream "~@:_     ~2,' D: ~A~@:_" (incf n) note)))
+                           (let ((n 0))
+                             (when compiler-notes
+                               (format stream "~@:_   compiler note~p:~@:_"
+                                       (length compiler-notes)))
+                             (dolist (note compiler-notes)
+                               (format stream "~@:_     ~2,' D: ~A~@:_" (incf n) note)))
+                           (when deletion-notes
+                             (format stream "~@:_   deleting unreachable code~@:_"))
+                           (when enclosing
+                             (format stream "~@:_      source path: ~@<~{~A~^ ~}~:@>~@:_"
+                                     enclosing)))))))
+                 (fresh-line stream))))
+      (dolist (info *collected-compiler-conditions*)
+        (destructuring-bind (note . context) info
+          (let ((key (cons (compiler-error-context-file-name context)
+                           (compiler-error-context-context context)))
+                (form (compiler-error-context-original-source context))
+                (enclosing (compiler-error-context-enclosing-source context))
+                (source (compiler-error-context-source context)))
+            (unless (equal last key)
+              (report-them)
+              (setf last key
+                    form-table nil))
+            (let ((source-table (assoc form form-table :test #'equal)))
+              (unless source-table
+                (setf source-table (list form))
+                (push source-table form-table))
+              (let ((note-table (assoc source (cdr source-table) :test #'equal)))
+                (unless note-table
+                  (setf note-table (list source enclosing nil nil nil nil nil))
+                  (push note-table (cdr source-table)))
+                (etypecase note
+                  ((or error compiler-error)
+                   (push note (third note-table)))
+                  ((and warning (not style-warning))
+                   (push note (fourth note-table)))
+                  (style-warning
+                   (push note (fifth note-table)))
+                  ((and compiler-note (not code-deletion-note))
+                   (push note (sixth note-table)))
+                  (code-deletion-note
+                   (setf (seventh note-table) t))))))))
+      (report-them))))
 
 (macrolet ((with-condition ((condition datum args) &body body)
              (with-unique-names (block)
@@ -415,24 +439,8 @@ has written, having proved that it is unreachable."))
               (policy *lexenv* (= inhibit-warnings 3)))
       (with-condition (condition datum args)
         (incf *compiler-note-count*)
-        (print-compiler-message
-         *error-output*
-         (format nil "note: ~~A")
-         (list (princ-to-string condition)))))
-    (values))
-
-  ;; Issue a note when we might or might not be in the compiler.
-  (defun maybe-compiler-notify (datum &rest args)
-    (if (boundp '*lexenv*) ; if we're in the compiler
-        (apply #'compiler-notify datum args)
-        (with-condition (condition datum args)
-          (let ((stream *error-output*))
-            (pprint-logical-block (stream nil :per-line-prefix ";")
-              (format stream " note: ~3I~_")
-              (pprint-logical-block (stream nil)
-                (format stream "~A" condition)))
-            ;; (outside logical block, no per-line-prefix)
-            (fresh-line stream))))))
+        (push (cons condition (find-error-context nil)) *collected-compiler-conditions*)))
+    (values)))
 
 ;;; The politically correct way to print out progress messages and
 ;;; such like. We clear the current error context so that we know that
@@ -442,7 +450,6 @@ has written, having proved that it is unreachable."))
 (defun compiler-mumble (control &rest args)
   (let ((stream *standard-output*))
     (note-message-repeats stream)
-    (setq *last-error-context* nil)
     (apply #'format stream control args)
     (force-output stream)
     (values)))
@@ -484,20 +491,26 @@ has written, having proved that it is unreachable."))
   (incf *compiler-error-count*)
   (setf *warnings-p* t
         *failure-p* t)
-  (print-compiler-condition condition)
+  (when (boundp '*collected-compiler-conditions*)
+    (push (cons condition (find-error-context nil))
+          *collected-compiler-conditions*))
   (continue condition))
 (defun compiler-warning-handler (condition)
   (signal condition)
   (incf *compiler-warning-count*)
   (setf *warnings-p* t
         *failure-p* t)
-  (print-compiler-condition condition)
+  (when (boundp '*collected-compiler-conditions*)
+    (push (cons condition (find-error-context nil))
+          *collected-compiler-conditions*))
   (muffle-warning condition))
 (defun compiler-style-warning-handler (condition)
   (signal condition)
   (incf *compiler-style-warning-count*)
   (setf *warnings-p* t)
-  (print-compiler-condition condition)
+  (when (boundp '*collected-compiler-conditions*)
+    (push (cons condition (find-error-context nil))
+          *collected-compiler-conditions*))
   (muffle-warning condition))
 
 ;;;; undefined warnings
@@ -543,6 +556,9 @@ has written, having proved that it is unreachable."))
              (car
               (rassoc 'muffle-warning
                       (lexenv-handled-conditions *lexenv*))))))
+    (when (eq kind :variable)
+      (let ((*compiler-error-context* (find-error-context (list name))))
+        (compiler-warn "undefined variable: ~S" name)))
     (let* ((found (dolist (warning *undefined-warnings* nil)
                     (when (and (equal (undefined-warning-name warning) name)
                                (eq (undefined-warning-kind warning) kind))
@@ -553,6 +569,8 @@ has written, having proved that it is unreachable."))
       (multiple-value-bind (context old)
           (find-error-context (list name) (undefined-warning-warnings res))
         (unless old
+          (when (eq kind :type)
+            (compiler-style-warn "undefined type: ~S" name))
           (when (or (not *undefined-warning-limit*)
                     (< (undefined-warning-count res) *undefined-warning-limit*))
             (push context (undefined-warning-warnings res)))

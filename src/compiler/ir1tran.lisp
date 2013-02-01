@@ -55,8 +55,17 @@
         ;; by leaves. Having leaves in the source path is pretty
         ;; hard on the poor user, however, so replace with the
         ;; source-name when possible.
-        (if (and (leaf-p op) (leaf-has-source-name-p op))
-            (cons (leaf-source-name op) (cdr form))
+        ;;
+        ;; If not, use #',inline-expansion -- finally falling
+        ;; back to debug name if all else fails.
+        (if (leaf-p op)
+            (if (leaf-has-source-name-p op)
+                (cons (leaf-source-name op) (cdr form))
+                (cons (or (and (functional-p op)
+                               (awhen (functional-inline-expansion op)
+                                 `(clambda ,@(cdr it))))
+                          (leaf-debug-name op))
+                      (cdr form)))
             form))
       form))
 
@@ -266,45 +275,47 @@
 (defun find-free-var (name)
   (unless (symbolp name)
     (compiler-error "Variable name is not a symbol: ~S." name))
-  (or (gethash name *free-vars*)
-      (let ((kind (info :variable :kind name))
-            (type (info :variable :type name))
-            (where-from (info :variable :where-from name)))
-        (when (eq kind :unknown)
-          (note-undefined-reference name :variable))
-        (setf (gethash name *free-vars*)
-              (case kind
-                (:alien
-                 (info :variable :alien-info name))
-                ;; FIXME: The return value in this case should really be
-                ;; of type SB!C::LEAF.  I don't feel too badly about it,
-                ;; because the MACRO idiom is scattered throughout this
-                ;; file, but it should be cleaned up so we're not
-                ;; throwing random conses around.  --njf 2002-03-23
-                (:macro
-                 (let ((expansion (info :variable :macro-expansion name))
-                       (type (type-specifier (info :variable :type name))))
-                   `(macro . (the ,type ,expansion))))
-                (:constant
-                 (let ((value (symbol-value name)))
-                   ;; Override the values of standard symbols in XC,
-                   ;; since we can't redefine them.
-                   #+sb-xc-host
-                   (when (eql (find-symbol (symbol-name name) :cl) name)
-                     (multiple-value-bind (xc-value foundp)
-                         (info :variable :xc-constant-value name)
-                       (cond (foundp
-                              (setf value xc-value))
-                             ((not (eq value name))
-                              (compiler-warn
-                               "Using cross-compilation host's definition of ~S: ~A~%"
-                               name (symbol-value name))))))
-                   (find-constant value name)))
-                (t
-                 (make-global-var :kind kind
-                                  :%source-name name
-                                  :type type
-                                  :where-from where-from)))))))
+  (let ((var
+          (or (gethash name *free-vars*)
+              (let ((kind (info :variable :kind name))
+                    (type (info :variable :type name))
+                    (where-from (info :variable :where-from name)))
+                (setf (gethash name *free-vars*)
+                      (case kind
+                        (:alien
+                         (info :variable :alien-info name))
+                        ;; FIXME: The return value in this case should really be
+                        ;; of type SB!C::LEAF.  I don't feel too badly about it,
+                        ;; because the MACRO idiom is scattered throughout this
+                        ;; file, but it should be cleaned up so we're not
+                        ;; throwing random conses around.  --njf 2002-03-23
+                        (:macro
+                         (let ((expansion (info :variable :macro-expansion name))
+                               (type (type-specifier (info :variable :type name))))
+                           `(macro . (the ,type ,expansion))))
+                        (:constant
+                         (let ((value (symbol-value name)))
+                           ;; Override the values of standard symbols in XC,
+                           ;; since we can't redefine them.
+                           #+sb-xc-host
+                           (when (eql (find-symbol (symbol-name name) :cl) name)
+                             (multiple-value-bind (xc-value foundp)
+                                 (info :variable :xc-constant-value name)
+                               (cond (foundp
+                                      (setf value xc-value))
+                                     ((not (eq value name))
+                                      (compiler-warn
+                                       "Using cross-compilation host's definition of ~S: ~A~%"
+                                       name (symbol-value name))))))
+                           (find-constant value name)))
+                        (t
+                         (make-global-var :kind kind
+                                          :%source-name name
+                                          :type type
+                                          :where-from where-from))))))))
+    (when (and (global-var-p var) (eq :unknown (global-var-kind var)))
+      (note-undefined-reference name :variable))
+    var))
 
 ;;; Grovel over CONSTANT checking for any sub-parts that need to be
 ;;; processed with MAKE-LOAD-FORM. We have to be careful, because
@@ -737,7 +748,7 @@
                  (let ((res (handler-case
                                 (careful-expand-macro cmacro-fun form t)
                               (compiler-macro-keyword-problem (c)
-                                (print-compiler-message *error-output* "note: ~A" (list c))
+                                (compiler-notify "~A" c)
                                 form))))
                    (cond ((eq res form)
                           (ir1-convert-common-functoid start next result form op))

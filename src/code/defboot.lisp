@@ -188,7 +188,7 @@ evaluated as a PROGN."
               (or (sb!c:maybe-inline-syntactic-closure lambda env)
                   (progn
                     (#+sb-xc-host warn
-                     #-sb-xc-host sb!c:maybe-compiler-notify
+                     #-sb-xc-host style-warn
                      "lexical environment too hairy, can't inline DEFUN ~S"
                      name)
                     nil)))))

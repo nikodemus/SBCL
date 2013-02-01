@@ -4307,7 +4307,6 @@
     (def compiler-warn)
     (def compiler-style-warn)
     (def compiler-notify)
-    (def maybe-compiler-notify)
     (def bug)))
 
 (defoptimizer (cerror optimizer) ((report control &rest args))

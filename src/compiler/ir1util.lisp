@@ -1220,9 +1220,10 @@
               (return-block (and return (node-block return))))
          (unless (leaf-ever-used clambda)
            (let ((*compiler-error-context* bind))
-             (compiler-notify 'code-deletion-note
-                              :format-control "deleting unused function~:[.~;~:*~%  ~S~]"
-                              :format-arguments (list (leaf-debug-name clambda)))))
+             (compiler-notify
+              'code-deletion-note
+              :format-control "~@<~2Ideleting unused function: ~:[.~;~:*~S~]~:@>"
+              :format-arguments (list (leaf-debug-name clambda)))))
          (unless (block-delete-p bind-block)
            (unlink-blocks (component-head component) bind-block))
          (when (and return-block (not (block-delete-p return-block)))
@@ -1529,7 +1530,7 @@
     (unless (or (leaf-ever-used var)
                 (lambda-var-ignorep var))
       (let ((*compiler-error-context* (lambda-bind fun)))
-        (unless (policy *compiler-error-context* (= inhibit-warnings 3))
+        (unless (policy (lambda-bind fun) (= inhibit-warnings 3))
           ;; ANSI section "3.2.5 Exceptional Situations in the Compiler"
           ;; requires this to be no more than a STYLE-WARNING.
           #-sb-xc-host

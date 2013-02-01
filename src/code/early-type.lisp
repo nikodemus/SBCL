@@ -577,7 +577,8 @@
                      (when (and *type-system-initialized*
                                 (not (eq (info :type :kind spec)
                                          :forthcoming-defclass-type)))
-                       (signal 'parse-unknown-type :specifier spec))
+                       (with-simple-restart (continue "Continue parsing the type.")
+                         (signal 'parse-unknown-type :specifier spec)))
                      ;; (The RETURN-FROM here inhibits caching; this
                      ;; does not only make sense from a compiler
                      ;; diagnostics point of view but is also

@@ -371,12 +371,12 @@
                                                 (vop-results op-vop)))
                                (error "couldn't find op? bug!")))))
              (compiler-notify
-              "doing ~A (cost ~W)~:[~2*~; ~:[to~;from~] ~S~], for:~%~6T~
-               the ~:R ~:[result~;argument~] of ~A"
+              "~@<doing ~A (cost ~W)~:[~2*~; ~:[to~;from~] ~S~] for: ~_~
+               the ~:R ~:[result~;argument~] of ~A~:>"
               note cost name arg-p name
               pos arg-p op-note)))
           (t
-           (compiler-notify "doing ~A (cost ~W)~@[ from ~S~]~@[ to ~S~]"
+           (compiler-notify "~@<doing ~A (cost ~W)~@[ from ~S~]~@[ to ~A~]~:>"
                             note cost (get-operand-name op-tn t)
                             (get-operand-name dest-tn nil)))))
   (values))

@@ -283,10 +283,19 @@ Examples:
                                          (symbol-name x)
                                          (prin1-to-string x)))))))
           (dolist (kind '(:variable :function :type))
-            (let ((names (mapcar #'undefined-warning-name
-                                   (remove kind undefs :test #'neq
-                                           :key #'undefined-warning-kind))))
-              (when names (push (cons kind names) summary))))
+            (let* ((these-undefs (remove kind undefs :test #'neq
+                                                     :key #'undefined-warning-kind))
+                   (names (mapcar #'undefined-warning-name these-undefs))
+                   (warnings (mapcar (lambda (warns)
+                                       (remove-duplicates
+                                        (remove-if-not
+                                         #'compiler-error-context-p
+                                         (undefined-warning-warnings warns))
+                                        :key #'compiler-error-context-context
+                                        :test #'equal))
+                                     these-undefs)))
+              (when names
+                (push (list kind names warnings) summary))))
           (dolist (undef undefs)
             (let ((name (undefined-warning-name undef))
                   (kind (undefined-warning-kind undef))
@@ -326,8 +335,10 @@ Examples:
                              that name would not be portable.~:@>" name
                              name))))
                     (if (eq kind :variable)
-                        (compiler-warn "undefined ~(~A~): ~S" kind name)
-                        (compiler-style-warn "undefined ~(~A~): ~S" kind name))))
+                        (compiler-warn "undefined ~(~A~): ~S"
+                                       kind name)
+                        (compiler-style-warn "undefined ~(~A~): ~S"
+                                             kind name))))
               (let ((warn-count (length warnings)))
                 (when (and warnings (> undefined-warning-count warn-count))
                   (let ((more (- undefined-warning-count warn-count)))
@@ -345,15 +356,25 @@ Examples:
                  (zerop *compiler-warning-count*)
                  (zerop *compiler-style-warning-count*)
                  (zerop *compiler-note-count*))
+      (fresh-line *error-output*)
       (pprint-logical-block (*error-output* nil :per-line-prefix "; ")
-        (format *error-output* "~&compilation unit ~:[finished~;aborted~]"
+        (format *error-output* "compilation unit ~:[finished~;aborted~]"
                 abort-p)
         (dolist (cell summary)
-          (destructuring-bind (kind &rest names) cell
+          (destructuring-bind (kind names all-warnings) cell
             (format *error-output*
-                    "~&  Undefined ~(~A~)~p:~
-                     ~%    ~{~<~% ~1:;~S~>~^ ~}"
-                    kind (length names) names)))
+                    "~&  Undefined ~(~A~)~p:"
+                    kind (length names))
+            (let ((*print-level* 3)
+                  (*print-length* 2)
+                  (*print-pretty* t)
+                  (*print-pprint-dispatch* (compiler-pprint-dispatch)))
+              (mapc (lambda (name warnings)
+                     (format *error-output* "~%  - ~S in: ~{~{~A~^ ~}~^, ~}"
+                             name (mapcar (lambda (w)
+                                            (car (compiler-error-context-context w)))
+                                          warnings)))
+                   names all-warnings))))
         (format *error-output* "~[~:;~:*~&  caught ~W fatal ERROR condition~:P~]~
                                 ~[~:;~:*~&  caught ~W ERROR condition~:P~]~
                                 ~[~:;~:*~&  caught ~W WARNING condition~:P~]~
@@ -488,8 +509,12 @@ Examples:
 ;;; Do all the IR1 phases for a non-top-level component.
 (defun ir1-phases (component)
   (declare (type component component))
-  (aver-live-component component)
-  (let ((*constraint-universe* (make-array 64 ; arbitrary, but don't
+  ;; Any unknown types we run across here are re-appearances that have
+  ;; already been reported for the original source. Don't bother making more
+  ;; noise.
+  (handler-bind ((parse-unknown-type #'continue))
+    (aver-live-component component)
+    (let ((*constraint-universe* (make-array 64 ; arbitrary, but don't
                                               ;make this 0.
                                            :fill-pointer 0 :adjustable t))
         (loop-count 1)
@@ -525,7 +550,7 @@ Examples:
         (maybe-mumble "[reoptimize limit]")
         (event reoptimize-maxed-out)
         (return))
-      (incf loop-count)))
+      (incf loop-count))))
 
   (ir1-finalize component)
   (values))
@@ -1163,6 +1188,7 @@ Examples:
                       :handled-conditions *handled-conditions*
                       :disabled-package-locks *disabled-package-locks*))
            (*compiler-sset-counter* 0)
+           (*collected-compiler-conditions* nil)
            (fun (make-functional-from-toplevel-lambda lambda-expression
                                                       :name name
                                                       :path path)))
@@ -1228,7 +1254,8 @@ Examples:
               (when (core-object-p *compile-object*)
                 (fix-core-source-info *source-info* *compile-object* result))
 
-              (mapc #'clear-ir1-info components-from-dfo))))))))
+              (mapc #'clear-ir1-info components-from-dfo)
+              (report-collected-compiler-notes))))))))
 
 (defun process-toplevel-cold-fset (name lambda-expression path)
   (unless (producing-fasl-file)
@@ -1534,33 +1561,36 @@ Examples:
 (defun compile-toplevel (lambdas load-time-value-p)
   (declare (list lambdas))
 
-  (maybe-mumble "locall ")
-  (locall-analyze-clambdas-until-done lambdas)
+  (let (*collected-compiler-conditions*)
+    (maybe-mumble "locall ")
+    (locall-analyze-clambdas-until-done lambdas)
 
-  (maybe-mumble "IDFO ")
-  (multiple-value-bind (components top-components hairy-top)
-      (find-initial-dfo lambdas)
-    (let ((all-components (append components top-components)))
-      (when *check-consistency*
-        (maybe-mumble "[check]~%")
-        (check-ir1-consistency all-components))
+    (maybe-mumble "IDFO ")
+    (multiple-value-bind (components top-components hairy-top)
+        (find-initial-dfo lambdas)
+      (let ((all-components (append components top-components)))
+        (when *check-consistency*
+          (maybe-mumble "[check]~%")
+          (check-ir1-consistency all-components))
 
-      (dolist (component (append hairy-top top-components))
-        (pre-physenv-analyze-toplevel component))
+        (dolist (component (append hairy-top top-components))
+          (pre-physenv-analyze-toplevel component))
 
-      (dolist (component components)
-        (compile-component component)
-        (replace-toplevel-xeps component))
+        (dolist (component components)
+          (compile-component component)
+          (replace-toplevel-xeps component))
 
-      (when *check-consistency*
-        (maybe-mumble "[check]~%")
-        (check-ir1-consistency all-components))
+        (when *check-consistency*
+          (maybe-mumble "[check]~%")
+          (check-ir1-consistency all-components))
 
-      (if load-time-value-p
-          (compile-load-time-value-lambda lambdas)
-          (compile-toplevel-lambdas lambdas))
+        (if load-time-value-p
+            (compile-load-time-value-lambda lambdas)
+            (compile-toplevel-lambdas lambdas))
 
-      (mapc #'clear-ir1-info components)))
+        (mapc #'clear-ir1-info components)))
+    (report-collected-compiler-notes))
+
   (values))
 
 ;;; Actually compile any stuff that has been queued up for block

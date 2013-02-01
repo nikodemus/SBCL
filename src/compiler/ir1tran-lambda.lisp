@@ -302,7 +302,7 @@
   (aver-live-component *current-component*)
 
   (let* ((bind (make-bind))
-         (lambda (make-lambda :vars vars
+          (lambda (make-lambda :vars vars
                   :bind bind
                   :%source-name source-name
                   :%debug-name debug-name
@@ -1025,36 +1025,37 @@
                                debug-name)
   (when (and (not debug-name) (eq '.anonymous. source-name))
     (setf debug-name (name-lambdalike thing)))
-  (ecase (car thing)
-    ((lambda)
-     (ir1-convert-lambda thing
-                         :maybe-add-debug-catch t
-                         :source-name source-name
-                         :debug-name debug-name))
-    ((named-lambda)
-     (let ((name (cadr thing))
-           (lambda-expression `(lambda ,@(cddr thing))))
-       (if (and name (legal-fun-name-p name))
-           (let ((defined-fun-res (get-defined-fun name (second lambda-expression)))
-                 (res (ir1-convert-lambda lambda-expression
-                                          :maybe-add-debug-catch t
-                                          :source-name name)))
-             (assert-global-function-definition-type name res)
-             (push res (defined-fun-functionals defined-fun-res))
-             (unless (eq (defined-fun-inlinep defined-fun-res) :notinline)
-               (substitute-leaf-if
-                (lambda (ref)
-                  (policy ref (> recognize-self-calls 0)))
-                res defined-fun-res))
-             res)
-           (ir1-convert-lambda lambda-expression
-                               :maybe-add-debug-catch t
-                               :debug-name
-                               (or name (name-lambdalike thing))))))
-    ((lambda-with-lexenv)
-     (ir1-convert-inline-lambda thing
-                                :source-name source-name
-                                :debug-name debug-name))))
+  (let ((*current-path* (ensure-source-path thing)))
+    (ecase (car thing)
+      ((lambda)
+       (ir1-convert-lambda thing
+                           :maybe-add-debug-catch t
+                           :source-name source-name
+                           :debug-name debug-name))
+      ((named-lambda)
+       (let ((name (cadr thing))
+             (lambda-expression `(lambda ,@(cddr thing))))
+         (if (and name (legal-fun-name-p name))
+             (let ((defined-fun-res (get-defined-fun name (second lambda-expression)))
+                   (res (ir1-convert-lambda lambda-expression
+                                            :maybe-add-debug-catch t
+                                            :source-name name)))
+               (assert-global-function-definition-type name res)
+               (push res (defined-fun-functionals defined-fun-res))
+               (unless (eq (defined-fun-inlinep defined-fun-res) :notinline)
+                 (substitute-leaf-if
+                  (lambda (ref)
+                    (policy ref (> recognize-self-calls 0)))
+                  res defined-fun-res))
+               res)
+             (ir1-convert-lambda lambda-expression
+                                 :maybe-add-debug-catch t
+                                 :debug-name
+                                 (or name (name-lambdalike thing))))))
+      ((lambda-with-lexenv)
+       (ir1-convert-inline-lambda thing
+                                  :source-name source-name
+                                  :debug-name debug-name)))))
 
 ;;;; defining global functions
 

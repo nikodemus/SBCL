@@ -575,7 +575,7 @@
              (let ((*compiler-error-context* cast))
                (when (policy cast (>= safety inhibit-warnings))
                  (compiler-notify
-                  "type assertion too complex to check:~% ~S."
+                  "~@<type assertion too complex to check: ~S~:@>"
                   (type-specifier (coerce-to-values (cast-asserted-type cast))))))
              (setf (cast-type-to-check cast) *wild-type*)
              (setf (cast-%type-check cast) nil)))))))

@@ -119,6 +119,8 @@
 (defvar *warnings-p*)
 (defvar *lambda-conversions*)
 
+(defvar *collected-compiler-conditions*)
+
 (defvar *stack-allocate-dynamic-extent* t
   "If true (the default), the compiler respects DYNAMIC-EXTENT declarations
 and stack allocates otherwise inaccessible parts of the object whenever
